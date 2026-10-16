@@ -18,6 +18,20 @@ function logoHTML(px){
   const inner=S.logo?'<img src="'+S.logo+'" alt="Logo Trường Đại học Công Thương" style="width:'+px+'px;height:'+px+'px">':'<div class="logo-ph" style="width:'+px+'px;height:'+px+'px;font-size:'+Math.round(px/4)+'px">HUIT</div>';
   return '<button class="logo-btn" data-act="logo" title="Bấm để thay bằng logo của trường" aria-label="Thay logo trường"><div class="logo-wrap">'+inner+'</div></button>';
 }
+// Chuyển đổi Excel date serial (số nguyên như 46034) thành chuỗi 'yyyy-mm-dd'.
+// Excel dùng mốc 1/1/1900 (Windows datemode=0). Nếu serial không phải ngày hợp lệ, trả về null.
+function excelSerialToDate(serial){
+  // Chỉ xử lý serial hợp lý: từ 1/1/1990 (~32874) đến 31/12/2099 (~73050)
+  const n=Number(serial);
+  if(!Number.isFinite(n)||n<32874||n>73050)return null;
+  // Mốc Excel: ngày 0 = 0/1/1900, nhưng Excel có lỗi tháng 2/1900 (serial 60),
+  // nên cộng thêm offset cho đúng: dùng Date(1899,11,30) làm mốc
+  const ms=(n-1)*86400000; // ms kể từ 31/12/1899
+  const epoch=new Date(1899,11,30);
+  const d=new Date(epoch.getTime()+ms);
+  if(isNaN(d.getTime()))return null;
+  return validDate(d.getFullYear(),d.getMonth()+1,d.getDate());
+}
 function readTable(f){return new Promise((res,rej)=>{
   const r=new FileReader();
   r.onerror=()=>rej(new Error('Không đọc được file.'));
@@ -43,6 +57,10 @@ function parseDate(v){
     let a=+m[1],b=+m[2],y=+m[3];if(y<100)y+=2000;
     return validDate(y,b,a)||validDate(y,a,b);
   }
+  // Excel date serial: số thuần (ví dụ "46034" hoặc "46034.0") khi SheetJS không format được cell ngày.
+  // Dùng khoảng 32874 (~01/01/1990) đến 73050 (~31/12/2099) để tránh nhầm với STT nhỏ.
+  m=v.match(/^(\d{5,}(?:\.\d*)?)$/);
+  if(m){const d=excelSerialToDate(parseFloat(m[1]));if(d)return d;}
   return null;
 }
 function plain(v){return String(v==null?'':v).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/đ/g,'d').replace(/[\u00a0\u200b\ufeff]/g,' ').replace(/\s+/g,' ').trim()}

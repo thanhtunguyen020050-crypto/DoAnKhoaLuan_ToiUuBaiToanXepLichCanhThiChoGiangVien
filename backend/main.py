@@ -322,11 +322,19 @@ def import_teaching(rows:list[LichDayImportRow], filename:str|None=None):
                     errors.append({'line':r.line,'name':r.name,'msg':'Tên giảng viên bị trùng trong CSDL, không thể xác định MaGV.'}); continue
                 grouped.setdefault(matches[0][0],[]).append(r)
             if errors: raise HTTPException(status_code=400,detail={'message':'Import lịch dạy bị từ chối vì có giảng viên chưa khớp CSDL.','errors':errors})
+            total_inserted=0
             for ma,items in grouped.items():
                 cur.execute('DELETE FROM dbo.LichDayGV WHERE MaGV=?',ma)
+                # Dedup: cùng GV + cùng ngày + cùng tiết chỉ INSERT 1 lần
+                # (file Excel có thể liệt kê cùng GV dạy nhiều lớp khác nhau cùng slot)
+                seen=set()
                 for r in items:
+                    key=(r.date,r.start,r.end)
+                    if key in seen: continue
+                    seen.add(key)
                     cur.execute('EXEC dbo.sp_ThemLichDayGV ?,?,?,?,?,?',ma,r.date,r.start,r.end,filename,None)
-            cn.commit(); return {'ok':True,'teachers':len(grouped),'rows':len(rows)}
+                    total_inserted+=1
+            cn.commit(); return {'ok':True,'teachers':len(grouped),'rows':total_inserted,'duplicates_skipped':len(rows)-total_inserted}
     except HTTPException: raise
     except Exception as e: raise HTTPException(400,f'Lỗi import lịch dạy: {e}')
 
