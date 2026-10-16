@@ -50,16 +50,52 @@ const C={
   'teach-file'(t){
     const f=t.files[0];if(!f)return;
     readTable(f).then(rows=>{
-      const out={name:f.name,rows:[],errors:[],teachers:[]};let date=null,hdr=-1,ti=8,gi=9;
-      for(let i=0;i<rows.length;i++){const cells=rows[i].map(plain);if(cells.some(x=>x.includes('giang vien'))&&cells.some(x=>x==='tiet'||x.startsWith('tiet '))){hdr=i;ti=cells.findIndex(x=>x==='tiet'||x.startsWith('tiet '));gi=cells.findIndex(x=>x.includes('giang vien'));break}}
-      if(hdr<0){toast('Không tìm thấy hàng tiêu đề “Tiết” và “Giảng viên” trong file.');return}
-      for(let i=hdr+1;i<rows.length;i++){
-        const r=rows[i]||[],d=parseDate(r[0]);if(d){date=d;continue}
-        const name=String(r[gi]||'').trim(),range=parsePeriod(r[ti]);if(!name||!range)continue;
-        if(!date){out.errors.push({line:i+1,msg:'Không xác định được ngày học cho dòng này'});continue}
-        out.rows.push({name:name,date:date,period:range.key,start:range.start,end:range.end,line:i+1});
+      const out={name:f.name,rows:[],errors:[],teachers:[]};
+      let date=null,hdr=-1,ti=8,gi=9;
+
+      // Bước 1: Tìm ngày mặc định từ các dòng tiêu đề phía trên header
+      // (ví dụ: "Ngày 08/12/2026" hoặc "Từ ngày 01/12/2026 đến...") cho file 1 ngày
+      let defaultDate=null;
+      for(let i=0;i<Math.min(rows.length,8);i++){
+        const cell0=String(rows[i]&&rows[i][0]||'').trim();
+        const dm=cell0.match(/(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/);
+        if(dm){const pd=parseDate(dm[1]);if(pd&&!defaultDate)defaultDate=pd;}
       }
-      out.teachers=[...new Set(out.rows.map(r=>r.name))];if(!out.rows.length){toast('Không tìm thấy dòng lịch dạy hợp lệ trong file.');return}pendTeach=out;render();
+
+      // Bước 2: Tìm hàng tiêu đề chứa "Tiết" và "Giảng viên"
+      for(let i=0;i<rows.length;i++){
+        const cells=rows[i].map(plain);
+        if(cells.some(x=>x.includes('giang vien'))&&cells.some(x=>x==='tiet'||x.startsWith('tiet '))){
+          hdr=i;
+          ti=cells.findIndex(x=>x==='tiet'||x.startsWith('tiet '));
+          gi=cells.findIndex(x=>x.includes('giang vien'));
+          break;
+        }
+      }
+      if(hdr<0){toast('Không tìm thấy hàng tiêu đề "Tiết" và "Giảng viên" trong file.');return}
+
+      // Bước 3: Parse từng dòng, cập nhật ngày khi gặp date separator row.
+      // Date separator row: chỉ cột đầu có dữ liệu VÀ parse được thành ngày
+      // (hỗ trợ cả text "dd/mm/yyyy" lẫn Excel date serial số 5+ chữ số như "46034").
+      for(let i=hdr+1;i<rows.length;i++){
+        const r=rows[i]||[];
+        const r0str=String(r[0]||'').trim();
+        const nonEmpty=r.filter(x=>String(x||'').trim()).length;
+        // Ưu tiên phát hiện date separator row (chỉ có cột 0 có dữ liệu)
+        if(nonEmpty<=1&&r0str){const d=parseDate(r0str);if(d){date=d;continue;}}
+        // Fallback: nếu r[0] parse được ngày và không có GV/Tiết ở dòng đó
+        else if(r0str){const d=parseDate(r0str);if(d&&!String(r[gi]||'').trim()&&!parsePeriod(r[ti])){date=d;continue;}}
+
+        const name=String(r[gi]||'').trim(),range=parsePeriod(r[ti]);
+        if(!name||!range)continue;
+        // Dùng defaultDate nếu chưa gặp date separator row nào (file 1 ngày không có separator)
+        const effectiveDate=date||defaultDate;
+        if(!effectiveDate){out.errors.push({line:i+1,msg:'Không xác định được ngày học cho dòng này. Hãy kiểm tra file có dòng ngày phân cách giữa các nhóm ngày không?'});continue;}
+        out.rows.push({name:name,date:effectiveDate,period:range.key,start:range.start,end:range.end,line:i+1});
+      }
+      out.teachers=[...new Set(out.rows.map(r=>r.name))];
+      if(!out.rows.length){toast('Không tìm thấy dòng lịch dạy hợp lệ trong file. Kiểm tra lại cấu trúc file hoặc định dạng ngày.');return}
+      pendTeach=out;render();
     }).catch(er=>toast(er.message));t.value='';
   },
   'file-exam'(t){

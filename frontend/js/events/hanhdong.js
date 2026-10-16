@@ -60,6 +60,55 @@ const A={
     const items=busy.map(v=>{const [d,b]=v.split('|');return {ngay_ban:d,tu_tiet:b==='S'?1:7,den_tiet:b==='S'?6:12,ly_do:null}});
     try{await API.replaceBusy(l.id,items);await refreshLecturers(false);closeModal();render();toast('Đã lưu lịch bận vào SQL Server. Lịch dạy import không bị thay đổi. Lịch bận nhập tay được xử lý ở mức ưu tiên thấp nhất.')}catch(e){toast(e.message)}
   },
+  'clear-schedule'(t){
+    const l=lec(t.dataset.id);if(!l)return;
+    const hasTeach=!!(l.teach&&l.teach.length),hasBusy=!!(l.busy&&l.busy.length);
+    const icoBook='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>';
+    const icoBan='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>';
+    const cardStyle=(active,enabled)=>'display:flex;align-items:center;gap:14px;padding:14px 16px;border-radius:10px;border:2px solid '+(active&&enabled?'var(--bad)':'var(--line)')+';background:'+(active&&enabled?'var(--badbg)':'var(--card)')+';cursor:'+(enabled?'pointer':'not-allowed')+';opacity:'+(enabled?'1':'0.4')+';transition:border-color .15s,background .15s;user-select:none';
+    const cardTeach='<label style="'+cardStyle(hasTeach,hasTeach)+'" id="cardTeach">'
+      +'<span style="flex:none;width:40px;height:40px;border-radius:9px;background:'+(hasTeach?'var(--badbg)':'var(--sky)')+';color:'+(hasTeach?'var(--bad)':'var(--muted)')+';display:flex;align-items:center;justify-content:center">'+icoBook+'</span>'
+      +'<span style="flex:1;min-width:0"><span style="display:block;font-weight:600;font-size:14px">Lịch dạy</span>'
+      +'<span style="display:block;font-size:12.5px;color:var(--muted);margin-top:1px">'+(hasTeach?'<b style="color:var(--bad)">'+l.teach.length+' ca dạy</b> sẽ bị xóa khỏi LichDayGV':'Chưa có lịch dạy để xóa')+'</span></span>'
+      +'<input type="checkbox" id="clrTeach" style="width:18px;height:18px;accent-color:var(--bad);flex:none"'+(hasTeach?' checked':' disabled')+'>'
+      +'</label>';
+    const cardBusy='<label style="'+cardStyle(hasBusy,hasBusy)+'" id="cardBusy">'
+      +'<span style="flex:none;width:40px;height:40px;border-radius:9px;background:'+(hasBusy?'var(--badbg)':'var(--sky)')+';color:'+(hasBusy?'var(--bad)':'var(--muted)')+';display:flex;align-items:center;justify-content:center">'+icoBan+'</span>'
+      +'<span style="flex:1;min-width:0"><span style="display:block;font-weight:600;font-size:14px">Lịch bận</span>'
+      +'<span style="display:block;font-size:12.5px;color:var(--muted);margin-top:1px">'+(hasBusy?'<b style="color:var(--bad)">'+l.busy.length+' buổi bận</b> sẽ bị xóa khỏi LichBanGV':'Chưa có lịch bận để xóa')+'</span></span>'
+      +'<input type="checkbox" id="clrBusy" style="width:18px;height:18px;accent-color:var(--bad);flex:none"'+(hasBusy?' checked':' disabled')+'>'
+      +'</label>';
+    const warn='<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:var(--warnbg);color:var(--warn);font-size:13px;margin-top:14px">'
+      +'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+      +'<span>Dữ liệu bị xóa <b>không thể khôi phục</b>. Hãy chắc chắn trước khi xác nhận.</span></div>';
+    openModal({
+      title:'Xóa lịch của '+esc(l.name),
+      body:'<p style="color:var(--muted);font-size:13.5px;margin-bottom:14px">Chọn loại lịch cần xóa:</p>'
+        +'<div style="display:flex;flex-direction:column;gap:10px">'+cardTeach+cardBusy+'</div>'
+        +warn
+        +'<div class="err" id="clrErr" style="margin-top:10px"></div>',
+      foot:'<button class="btn" data-act="close">Hủy</button>'
+        +'<button style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border:0;border-radius:8px;background:var(--bad);color:#fff;font-weight:600;font-size:14px;cursor:pointer" data-act="do-clear-schedule" data-id="'+l.id+'">'
+        +'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>'
+        +'Xóa đã chọn</button>'
+    });
+  },
+  async 'do-clear-schedule'(t){
+    const l=lec(t.dataset.id);if(!l)return;
+    const doTeach=$('#clrTeach')&&$('#clrTeach').checked;
+    const doBusy=$('#clrBusy')&&$('#clrBusy').checked;
+    if(!doTeach&&!doBusy){const er=$('#clrErr');if(er)er.textContent='Vui lòng chọn ít nhất một loại lịch để xóa.';return}
+    const what=(doTeach&&doBusy)?'lịch dạy và lịch bận':doTeach?'lịch dạy':'lịch bận';
+    try{
+      const errs=[];
+      if(doTeach){try{await API.replaceTeaching(l.id,[])}catch(e){errs.push('Lịch dạy: '+e.message)}}
+      if(doBusy){try{await API.replaceBusy(l.id,[])}catch(e){errs.push('Lịch bận: '+e.message)}}
+      await refreshLecturers(false);closeModal();render();
+      if(errs.length)toast('Xóa một phần. Lỗi: '+errs.join('; '));
+      else toast('Đã xóa '+what+' của '+l.name+' khỏi SQL Server.');
+    }catch(e){toast(e.message)}
+  },
+
   'pick-busy-file'(){$('#fileBusy').click()},
   async 'apply-busy'(){
     if(!pendBusy)return;
