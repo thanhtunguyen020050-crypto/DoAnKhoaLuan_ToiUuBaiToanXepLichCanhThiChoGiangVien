@@ -1,20 +1,25 @@
 /*
-HỆ THỐNG QUẢN LÝ & XẾP LỊCH COI THI - SQL SERVER
-Thiết kế mở rộng nhiều KHOA / BỘ MÔN.
+    HỆ THỐNG QUẢN LÝ VÀ XẾP LỊCH COI THI - SQL SERVER
+    Bản cài đặt tổng hợp, sắp xếp theo nhóm chức năng.
 
-RÀNG BUỘC CỨNG khi CHỐT lịch:
-RB1: Định mức đúng tuyệt đối theo tỷ lệ tương đối; không vượt SoCaQuyDinh.
-RB2: Mỗi ca có đúng SoGVCanCap.
-RB3: Không trùng thời gian trong cùng ngày.
-RB4: Không coi thi trùng Lịch dạy.
-RB5: Trong cùng ngày + buổi, GV không trộn nhóm Lý thuyết/Tự luận; nếu đã nhận một nhóm thì phải phủ toàn bộ ca của nhóm đó trong buổi.
+    Yêu cầu SQL Server 2019 trở lên.
 
-RÀNG BUỘC MỀM:
-MT1: Giảm ca gãy.
-MT2: Né Lịch bận cá nhân, cấu hình mục tiêu 70%-90%.
+    RÀNG BUỘC CỨNG:
+      RB1  Định mức dương được lệch tối đa ±1 ca; định mức 0 không nhận ca.
+      RB2  Mỗi ca có đúng số giảng viên cần cấp.
+      RB3  Giảng viên không bị xếp hai ca trùng tiết trong cùng ngày.
+      RB4  Không xếp giám thị trùng lịch dạy.
+      RB5  Không trộn nhóm hình thức thi trong cùng ngày và buổi.
+      RB6  Không xếp trùng lịch bận ưu tiên 1.
 
-LƯU Ý: SQL lưu dữ liệu + kiểm tra/chặn ràng buộc. CP-SAT/SA/GA nên chạy ở Python backend,
-đọc dữ liệu từ SQL, tạo lịch, sau đó ghi PhanCongCoiThi và gọi sp_KiemTraRangBuoc/sp_ChotXepLich.
+    TIÊU CHÍ MỀM:
+      MT1  Giảm khoảng trống (ca gãy) trong lịch của giảng viên.
+      MT2  Hạn chế xếp trùng lịch bận ưu tiên 2-3; mục tiêu và ngưỡng đạt
+           được cấu hình theo từng đợt thi.
+
+    CẢNH BÁO: Đây là script cài lại database từ đầu, không phải migration.
+    Nếu DB_XepLichCoiThi_Final đã tồn tại, script sẽ xóa toàn bộ database đó
+    rồi tạo lại. Hãy sao lưu trước nếu cần giữ dữ liệu.
 */
 
 USE master;
@@ -29,7 +34,6 @@ CREATE DATABASE DB_XepLichCoiThi_Final COLLATE Latin1_General_100_CI_AS_SC_UTF8;
 GO
 USE DB_XepLichCoiThi_Final;
 GO
-
 CREATE TABLE Khoa (
     MaKhoa VARCHAR(20) NOT NULL,
     TenKhoa NVARCHAR(200) NOT NULL,
@@ -90,14 +94,14 @@ GO
 CREATE TABLE CauHinhXepLich (
     MaDot VARCHAR(20) NOT NULL,
     SoTietGapToiThieuCaGay INT NOT NULL CONSTRAINT DF_CFG_CaGay DEFAULT 1,
-    DoLechDinhMucChoPhep INT NOT NULL CONSTRAINT DF_CFG_Lech DEFAULT 0,
+    DoLechDinhMucChoPhep INT NOT NULL CONSTRAINT DF_CFG_Lech DEFAULT 1,
     TyLeNeLichBanToiThieu DECIMAL(5,2) NOT NULL CONSTRAINT DF_CFG_NeMin DEFAULT 70,
     TyLeNeLichBanMucTieu DECIMAL(5,2) NOT NULL CONSTRAINT DF_CFG_NeTarget DEFAULT 90,
     CONSTRAINT PK_CauHinh PRIMARY KEY (MaDot),
     CONSTRAINT FK_CFG_Dot FOREIGN KEY (MaDot) REFERENCES DotThi(MaDot) ON DELETE CASCADE,
     CONSTRAINT CK_CFG CHECK (
         SoTietGapToiThieuCaGay BETWEEN 1 AND 16 AND
-        DoLechDinhMucChoPhep = 0 AND
+        DoLechDinhMucChoPhep = 1 AND
         TyLeNeLichBanToiThieu BETWEEN 0 AND 100 AND
         TyLeNeLichBanMucTieu BETWEEN 0 AND 100 AND
         TyLeNeLichBanToiThieu <= TyLeNeLichBanMucTieu
@@ -131,9 +135,11 @@ CREATE TABLE LichBanGV (
     TuTiet INT NOT NULL,
     DenTiet INT NOT NULL,
     LyDo NVARCHAR(255) NULL,
+    UuTien TINYINT NOT NULL CONSTRAINT DF_LBGV_UuTien DEFAULT 3,
     CONSTRAINT PK_LichBanGV PRIMARY KEY(ID),
     CONSTRAINT FK_LBGV_GV FOREIGN KEY(MaGV) REFERENCES GiangVien(MaGV) ON DELETE CASCADE,
     CONSTRAINT CK_LBGV_Tiet CHECK(TuTiet BETWEEN 1 AND 16 AND DenTiet BETWEEN TuTiet AND 16),
+    CONSTRAINT CK_LBGV_UuTien CHECK(UuTien IN(1,2,3)),
     CONSTRAINT UQ_LBGV UNIQUE(MaGV,NgayBan,TuTiet,DenTiet)
 );
 GO
@@ -192,6 +198,8 @@ GO
 CREATE INDEX IX_PCT_GV ON PhanCongCoiThi(MaGV,MaCa);
 GO
 
+
+/* 02. Ham va thu tuc nghiep vu: tinh dinh muc, CRUD danh muc, dot thi, ca thi, lich day va lich ban. */
 CREATE OR ALTER FUNCTION dbo.fn_GiaoTiet(@Tu1 INT,@Den1 INT,@Tu2 INT,@Den2 INT)
 RETURNS BIT
 AS
@@ -502,14 +510,14 @@ AS BEGIN SET NOCOUNT ON; DELETE FROM dbo.LichDayGV WHERE ID=@ID; IF @@ROWCOUNT=0
 GO
 
 CREATE OR ALTER PROCEDURE dbo.sp_ThemLichBanGV
- @MaGV VARCHAR(20),@NgayBan DATE,@TuTiet INT,@DenTiet INT,@LyDo NVARCHAR(255)=NULL
+ @MaGV VARCHAR(20),@NgayBan DATE,@TuTiet INT,@DenTiet INT,@LyDo NVARCHAR(255)=NULL,@UuTien TINYINT=3
 AS
-BEGIN SET NOCOUNT ON; INSERT LichBanGV(MaGV,NgayBan,TuTiet,DenTiet,LyDo) VALUES(@MaGV,@NgayBan,@TuTiet,@DenTiet,@LyDo); END;
+BEGIN SET NOCOUNT ON; INSERT LichBanGV(MaGV,NgayBan,TuTiet,DenTiet,LyDo,UuTien) VALUES(@MaGV,@NgayBan,@TuTiet,@DenTiet,@LyDo,@UuTien); END;
 GO
 CREATE OR ALTER PROCEDURE dbo.sp_SuaLichBanGV
- @ID INT,@NgayBan DATE,@TuTiet INT,@DenTiet INT,@LyDo NVARCHAR(255)=NULL
+ @ID INT,@NgayBan DATE,@TuTiet INT,@DenTiet INT,@LyDo NVARCHAR(255)=NULL,@UuTien TINYINT=3
 AS
-BEGIN SET NOCOUNT ON; UPDATE LichBanGV SET NgayBan=@NgayBan,TuTiet=@TuTiet,DenTiet=@DenTiet,LyDo=@LyDo WHERE ID=@ID; IF @@ROWCOUNT=0 THROW 52501,N'Không tìm thấy lịch bận.',1; END;
+BEGIN SET NOCOUNT ON; UPDATE LichBanGV SET NgayBan=@NgayBan,TuTiet=@TuTiet,DenTiet=@DenTiet,LyDo=@LyDo,UuTien=@UuTien WHERE ID=@ID; IF @@ROWCOUNT=0 THROW 52501,N'Không tìm thấy lịch bận.',1; END;
 GO
 CREATE OR ALTER PROCEDURE dbo.sp_XoaLichBanGV @ID INT
 AS BEGIN SET NOCOUNT ON; DELETE FROM LichBanGV WHERE ID=@ID; IF @@ROWCOUNT=0 THROW 52502,N'Không tìm thấy lịch bận.',1; END;
@@ -536,12 +544,164 @@ BEGIN
 END;
 GO
 
-/* ========================= VALIDATION ========================= */
+
+/* 03. Tai khoan va cong thong tin giang vien. */
+IF OBJECT_ID(N'dbo.TaiKhoanGiangVien', N'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.TaiKhoanGiangVien (
+    MaGV VARCHAR(20) NOT NULL,
+    PasswordHash NVARCHAR(500) NULL,
+    MustChangePassword BIT NOT NULL CONSTRAINT DF_TKGV_MustChange DEFAULT 1,
+    IsActive BIT NOT NULL CONSTRAINT DF_TKGV_Active DEFAULT 1,
+    CreatedAt DATETIME2 NOT NULL CONSTRAINT DF_TKGV_Created DEFAULT SYSDATETIME(),
+    PasswordChangedAt DATETIME2 NULL,
+    LastLoginAt DATETIME2 NULL,
+    CONSTRAINT PK_TaiKhoanGiangVien PRIMARY KEY(MaGV),
+    CONSTRAINT FK_TKGV_GiangVien FOREIGN KEY(MaGV) REFERENCES dbo.GiangVien(MaGV)
+  );
+END;
+GO
+IF OBJECT_ID(N'dbo.YeuCauDoiCa', N'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.YeuCauDoiCa (
+    ID BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_YeuCauDoiCa PRIMARY KEY,
+    MaGVGui VARCHAR(20) NOT NULL,
+    MaGVNhan VARCHAR(20) NOT NULL,
+    MaCaGui VARCHAR(50) NOT NULL,
+    MaCaNhan VARCHAR(50) NULL,
+    TrangThai VARCHAR(20) NOT NULL CONSTRAINT DF_YCDC_TrangThai DEFAULT 'Pending',
+    LoiNhan NVARCHAR(500) NULL,
+    PhanHoi NVARCHAR(500) NULL,
+    TaoLuc DATETIME2 NOT NULL CONSTRAINT DF_YCDC_Tao DEFAULT SYSDATETIME(),
+    PhanHoiLuc DATETIME2 NULL,
+    HoanTatLuc DATETIME2 NULL,
+    CONSTRAINT FK_YCDC_Gui FOREIGN KEY(MaGVGui) REFERENCES dbo.GiangVien(MaGV),
+    CONSTRAINT FK_YCDC_Nhan FOREIGN KEY(MaGVNhan) REFERENCES dbo.GiangVien(MaGV),
+    CONSTRAINT FK_YCDC_CaGui FOREIGN KEY(MaCaGui) REFERENCES dbo.CaThi(MaCa),
+    CONSTRAINT FK_YCDC_CaNhan FOREIGN KEY(MaCaNhan) REFERENCES dbo.CaThi(MaCa),
+    CONSTRAINT CK_YCDC_KhacNguoi CHECK(MaGVGui<>MaGVNhan),
+    CONSTRAINT CK_YCDC_KhacCa CHECK(MaCaGui<>MaCaNhan),
+    CONSTRAINT CK_YCDC_TrangThai CHECK(TrangThai IN ('Pending','Accepted','Rejected','Cancelled','Failed'))
+  );
+  CREATE INDEX IX_YCDC_Nhan_TrangThai ON dbo.YeuCauDoiCa(MaGVNhan,TrangThai,TaoLuc DESC);
+  CREATE INDEX IX_YCDC_Gui ON dbo.YeuCauDoiCa(MaGVGui,TaoLuc DESC);
+END;
+GO
+
+/* Yêu cầu nhận coi thay chỉ chuyển một ca nên MaCaNhan để NULL.
+   ALTER này cũng nâng cấp các DB cũ đã tạo bảng theo luồng đổi hai ca. */
+IF OBJECT_ID(N'dbo.YeuCauDoiCa', N'U') IS NOT NULL
+   AND EXISTS(SELECT 1 FROM sys.columns
+              WHERE object_id=OBJECT_ID(N'dbo.YeuCauDoiCa')
+                AND name=N'MaCaNhan' AND is_nullable=0)
+BEGIN
+  ALTER TABLE dbo.YeuCauDoiCa ALTER COLUMN MaCaNhan VARCHAR(50) NULL;
+END;
+GO
+
+IF OBJECT_ID(N'dbo.ThongBao', N'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.ThongBao (
+    ID BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_ThongBao PRIMARY KEY,
+    MaGVNhan VARCHAR(20) NULL,
+    DoiTuongNhan VARCHAR(20) NOT NULL CONSTRAINT DF_TB_DoiTuong DEFAULT 'Lecturer',
+    TieuDe NVARCHAR(200) NOT NULL,
+    NoiDung NVARCHAR(1000) NOT NULL,
+    Loai VARCHAR(40) NOT NULL,
+    YeuCauDoiCaID BIGINT NULL,
+    DaDoc BIT NOT NULL CONSTRAINT DF_TB_DaDoc DEFAULT 0,
+    TaoLuc DATETIME2 NOT NULL CONSTRAINT DF_TB_Tao DEFAULT SYSDATETIME(),
+    CONSTRAINT FK_TB_GV FOREIGN KEY(MaGVNhan) REFERENCES dbo.GiangVien(MaGV),
+    CONSTRAINT FK_TB_YCDC FOREIGN KEY(YeuCauDoiCaID) REFERENCES dbo.YeuCauDoiCa(ID)
+  );
+  CREATE INDEX IX_ThongBao_GV_DaDoc ON dbo.ThongBao(MaGVNhan,DaDoc,TaoLuc DESC);
+END;
+GO
+
+IF OBJECT_ID(N'dbo.LichSuDoiCa', N'U') IS NULL
+BEGIN
+  CREATE TABLE dbo.LichSuDoiCa (
+    ID BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_LichSuDoiCa PRIMARY KEY,
+    YeuCauDoiCaID BIGINT NOT NULL,
+    MaGV1 VARCHAR(20) NOT NULL,
+    MaGV2 VARCHAR(20) NOT NULL,
+    MaCa1 VARCHAR(50) NOT NULL,
+    MaCa2 VARCHAR(50) NOT NULL,
+    ThoiGian DATETIME2 NOT NULL CONSTRAINT DF_LSDC_Time DEFAULT SYSDATETIME(),
+    KetQua NVARCHAR(100) NOT NULL,
+    CONSTRAINT FK_LSDC_YC FOREIGN KEY(YeuCauDoiCaID) REFERENCES dbo.YeuCauDoiCa(ID),
+    CONSTRAINT FK_LSDC_GV1 FOREIGN KEY(MaGV1) REFERENCES dbo.GiangVien(MaGV),
+    CONSTRAINT FK_LSDC_GV2 FOREIGN KEY(MaGV2) REFERENCES dbo.GiangVien(MaGV),
+    CONSTRAINT FK_LSDC_Ca1 FOREIGN KEY(MaCa1) REFERENCES dbo.CaThi(MaCa),
+    CONSTRAINT FK_LSDC_Ca2 FOREIGN KEY(MaCa2) REFERENCES dbo.CaThi(MaCa)
+  );
+END;
+GO
+IF OBJECT_ID(N'dbo.TaiKhoanAdmin', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.TaiKhoanAdmin (
+        AdminID INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        TenDangNhap NVARCHAR(100) NOT NULL UNIQUE,
+        MatKhauHash NVARCHAR(256) NOT NULL,
+        Salt NVARCHAR(64) NULL,
+        NgayTao DATETIME2 NOT NULL CONSTRAINT DF_TaiKhoanAdmin_NgayTao DEFAULT SYSDATETIME(),
+        LanCapNhatMatKhau DATETIME2 NULL,
+        TrangThai BIT NOT NULL CONSTRAINT DF_TaiKhoanAdmin_TrangThai DEFAULT 1
+    );
+END;
+GO
+
+IF COL_LENGTH(N'dbo.TaiKhoanAdmin', N'Salt') IS NULL
+    ALTER TABLE dbo.TaiKhoanAdmin ADD Salt NVARCHAR(64) NULL;
+GO
+
+
+/* 04. View thong ke ca gay va muc do ne lich ban. */
+CREATE OR ALTER VIEW dbo.vw_ThongKeCaGayGV AS
+WITH X AS(
+ SELECT p.MaGV,c.MaDot,c.NgayThi,c.DenTiet,LEAD(c.TuTiet) OVER(PARTITION BY p.MaGV,c.MaDot,c.NgayThi ORDER BY c.TuTiet,c.DenTiet,c.MaCa) TuSau
+ FROM PhanCongCoiThi p JOIN CaThi c ON c.MaCa=p.MaCa)
+SELECT x.MaDot,x.MaGV,COUNT(*) SoCaGay FROM X x JOIN CauHinhXepLich cfg ON cfg.MaDot=x.MaDot WHERE x.TuSau IS NOT NULL AND x.TuSau-x.DenTiet-1>=cfg.SoTietGapToiThieuCaGay GROUP BY x.MaDot,x.MaGV;
+GO
+
+CREATE OR ALTER VIEW dbo.vw_ThongKeLichBanGV
+AS
+WITH X AS
+(
+    SELECT
+        c.MaDot,
+        p.MaGV,
+        c.MaCa,
+        CASE WHEN EXISTS
+        (
+            SELECT 1
+            FROM dbo.LichBanGV b
+            WHERE b.MaGV=p.MaGV
+              AND b.UuTien IN(2,3)
+              AND b.NgayBan=c.NgayThi
+              AND c.TuTiet<=b.DenTiet
+              AND b.TuTiet<=c.DenTiet
+        ) THEN 1 ELSE 0 END AS TrungLichBan
+    FROM dbo.PhanCongCoiThi p
+    INNER JOIN dbo.CaThi c ON c.MaCa=p.MaCa
+)
+SELECT
+    MaDot,
+    MaGV,
+    COUNT(*) AS TongSoCa,
+    SUM(TrungLichBan) AS SoCaTrungLichBan,
+    CAST(100.0*(COUNT(*)-SUM(TrungLichBan))/NULLIF(COUNT(*),0) AS DECIMAL(5,2)) AS TyLeNeLichBan
+FROM X
+GROUP BY MaDot,MaGV;
+GO
+
+
+/* 05. Mot bo view/thu tuc kiem tra va chot lich; dinh muc duong cho phep lech +/- 1. */
 CREATE OR ALTER VIEW dbo.vw_ViPhamRangBuocCung
 AS
 WITH S AS
 (
-    SELECT c.MaDot, p.MaGV, COUNT(*) AS SoCa
+    SELECT c.MaDot,p.MaGV,COUNT(*) AS SoCa
     FROM dbo.PhanCongCoiThi p
     INNER JOIN dbo.CaThi c ON c.MaCa=p.MaCa
     GROUP BY c.MaDot,p.MaGV
@@ -564,132 +724,55 @@ Sessions AS
     SELECT MaGV,MaDot,NgayThi,Buoi,COUNT(*) AS SoNhom
     FROM AssignedType
     GROUP BY MaGV,MaDot,NgayThi,Buoi
-),
-FullType AS
-(
-    SELECT
-        a.MaDot,a.MaGV,a.NgayThi,a.Buoi,a.NhomHinhThucThi,
-        COUNT(DISTINCT p.MaCa) AS SoCaDaCap,
-        COUNT(DISTINCT CASE WHEN ct.SoGVCanCap>0 THEN ct.MaCa END) AS TongCa
-    FROM AssignedType a
-    INNER JOIN dbo.PhanCongCoiThi p
-        ON p.MaGV=a.MaGV
-    INNER JOIN dbo.CaThi c
-        ON c.MaCa=p.MaCa
-       AND c.MaDot=a.MaDot
-       AND c.NgayThi=a.NgayThi
-       AND c.Buoi=a.Buoi
-       AND c.NhomHinhThucThi=a.NhomHinhThucThi
-    INNER JOIN dbo.CaThi ct
-        ON ct.MaDot=a.MaDot
-       AND ct.NgayThi=a.NgayThi
-       AND ct.Buoi=a.Buoi
-       AND ct.NhomHinhThucThi=a.NhomHinhThucThi
-       AND ct.SoGVCanCap>0
-    GROUP BY a.MaDot,a.MaGV,a.NgayThi,a.Buoi,a.NhomHinhThucThi
 )
 SELECT
-    s.MaDot,N'RB1' AS MaRB,N'Vượt định mức' AS LoaiViPham,
+    s.MaDot,N'RB1' AS MaRB,N'Vượt định mức cho phép' AS LoaiViPham,
     s.MaGV,CAST(NULL AS VARCHAR(50)) AS MaCa,CAST(NULL AS VARCHAR(50)) AS MaCaLienQuan,
-    CONCAT(N'GV ',s.MaGV,N' được ',s.SoCa,N' ca, vượt định mức ',ISNULL(d.SoCaQuyDinh,0)) AS MoTa
+    CONCAT(N'GV ',s.MaGV,N' được ',s.SoCa,N' ca, vượt mức tối đa ',
+        ISNULL(d.SoCaQuyDinh,0)+CASE WHEN ISNULL(d.SoCaQuyDinh,0)=0 THEN 0 ELSE ISNULL(cfg.DoLechDinhMucChoPhep,1) END) AS MoTa
 FROM S s
 LEFT JOIN dbo.DinhMucPhanCong d ON d.MaDot=s.MaDot AND d.MaGV=s.MaGV
-WHERE s.SoCa>ISNULL(d.SoCaQuyDinh,0)
+LEFT JOIN dbo.CauHinhXepLich cfg ON cfg.MaDot=s.MaDot
+WHERE s.SoCa>ISNULL(d.SoCaQuyDinh,0)+CASE WHEN ISNULL(d.SoCaQuyDinh,0)=0 THEN 0 ELSE ISNULL(cfg.DoLechDinhMucChoPhep,1) END
 
 UNION ALL
-
-SELECT
-    c.MaDot,N'RB2',N'Thừa GV',NULL,c.MaCa,NULL,
-    CONCAT(N'Ca ',c.MaCa,N' có ',x.SoGV,N' GV, cần đúng ',c.SoGVCanCap)
-FROM dbo.CaThi c
-INNER JOIN C x ON x.MaCa=c.MaCa
+SELECT c.MaDot,N'RB2',N'Thừa GV',NULL,c.MaCa,NULL,
+       CONCAT(N'Ca ',c.MaCa,N' có ',x.SoGV,N' GV, cần đúng ',c.SoGVCanCap)
+FROM dbo.CaThi c INNER JOIN C x ON x.MaCa=c.MaCa
 WHERE x.SoGV>c.SoGVCanCap
 
 UNION ALL
-
-SELECT
-    c1.MaDot,N'RB3',N'Trùng thời gian',p1.MaGV,c1.MaCa,c2.MaCa,
-    CONCAT(N'GV ',p1.MaGV,N' trùng ca ',c1.MaCa,N' và ',c2.MaCa)
+SELECT c1.MaDot,N'RB3',N'Trùng thời gian',p1.MaGV,c1.MaCa,c2.MaCa,
+       CONCAT(N'GV ',p1.MaGV,N' trùng ca ',c1.MaCa,N' và ',c2.MaCa)
 FROM dbo.PhanCongCoiThi p1
 INNER JOIN dbo.CaThi c1 ON c1.MaCa=p1.MaCa
-INNER JOIN dbo.PhanCongCoiThi p2
-    ON p2.MaGV=p1.MaGV AND p2.MaCa>p1.MaCa
-INNER JOIN dbo.CaThi c2
-    ON c2.MaCa=p2.MaCa
-   AND c2.NgayThi=c1.NgayThi
-   AND c1.TuTiet<=c2.DenTiet
-   AND c2.TuTiet<=c1.DenTiet
+INNER JOIN dbo.PhanCongCoiThi p2 ON p2.MaGV=p1.MaGV AND p2.MaCa>p1.MaCa
+INNER JOIN dbo.CaThi c2 ON c2.MaCa=p2.MaCa AND c2.NgayThi=c1.NgayThi
+    AND c1.TuTiet<=c2.DenTiet AND c2.TuTiet<=c1.DenTiet
 
 UNION ALL
-
-SELECT
-    c.MaDot,N'RB4',N'Trùng lịch dạy',p.MaGV,c.MaCa,NULL,
-    CONCAT(N'GV ',p.MaGV,N' trùng lịch dạy ngày ',CONVERT(NVARCHAR(10),c.NgayThi,103),
-           N' với ca ',c.MaCa)
+SELECT c.MaDot,N'RB4',N'Trùng lịch dạy',p.MaGV,c.MaCa,NULL,
+       CONCAT(N'GV ',p.MaGV,N' trùng lịch dạy ngày ',CONVERT(NVARCHAR(10),c.NgayThi,103),N' với ca ',c.MaCa)
 FROM dbo.PhanCongCoiThi p
 INNER JOIN dbo.CaThi c ON c.MaCa=p.MaCa
-INNER JOIN dbo.LichDayGV b
-    ON b.MaGV=p.MaGV
-   AND b.NgayDay=c.NgayThi
-   AND c.TuTiet<=b.DenTiet
-   AND b.TuTiet<=c.DenTiet
+INNER JOIN dbo.LichDayGV b ON b.MaGV=p.MaGV AND b.NgayDay=c.NgayThi
+    AND c.TuTiet<=b.DenTiet AND b.TuTiet<=c.DenTiet
 
 UNION ALL
-
-SELECT
-    s.MaDot,N'RB5',N'Trộn nhóm ca trong buổi',s.MaGV,NULL,NULL,
-    CONCAT(N'GV ',s.MaGV,N' được phân công ',s.SoNhom,
-           N' nhóm ca khác nhau trong ngày ',CONVERT(NVARCHAR(10),s.NgayThi,103),
-           N', buổi ',s.Buoi)
+SELECT s.MaDot,N'RB5',N'Trộn nhóm ca trong buổi',s.MaGV,NULL,NULL,
+       CONCAT(N'GV ',s.MaGV,N' được phân công ',s.SoNhom,N' nhóm ca khác nhau trong ngày ',
+              CONVERT(NVARCHAR(10),s.NgayThi,103),N', buổi ',s.Buoi)
 FROM Sessions s
 WHERE s.SoNhom>1
 
 UNION ALL
-
-SELECT
-    f.MaDot,N'RB5',N'Không phủ đủ nhóm ca trong buổi',f.MaGV,NULL,NULL,
-    CONCAT(N'GV ',f.MaGV,N' mới phủ ',f.SoCaDaCap,N'/',f.TongCa,
-           N' ca nhóm ',f.NhomHinhThucThi,
-           N' ngày ',CONVERT(NVARCHAR(10),f.NgayThi,103),N', buổi ',f.Buoi)
-FROM FullType f
-WHERE f.SoCaDaCap<f.TongCa;
-GO
-
-CREATE OR ALTER VIEW dbo.vw_ThongKeCaGayGV AS
-WITH X AS(
- SELECT p.MaGV,c.MaDot,c.NgayThi,c.DenTiet,LEAD(c.TuTiet) OVER(PARTITION BY p.MaGV,c.MaDot,c.NgayThi ORDER BY c.TuTiet,c.DenTiet,c.MaCa) TuSau
- FROM PhanCongCoiThi p JOIN CaThi c ON c.MaCa=p.MaCa)
-SELECT x.MaDot,x.MaGV,COUNT(*) SoCaGay FROM X x JOIN CauHinhXepLich cfg ON cfg.MaDot=x.MaDot WHERE x.TuSau IS NOT NULL AND x.TuSau-x.DenTiet-1>=cfg.SoTietGapToiThieuCaGay GROUP BY x.MaDot,x.MaGV;
-GO
-
-CREATE OR ALTER VIEW dbo.vw_ThongKeLichBanGV
-AS
-WITH X AS
-(
-    SELECT
-        c.MaDot,
-        p.MaGV,
-        c.MaCa,
-        CASE WHEN EXISTS
-        (
-            SELECT 1
-            FROM dbo.LichBanGV b
-            WHERE b.MaGV=p.MaGV
-              AND b.NgayBan=c.NgayThi
-              AND c.TuTiet<=b.DenTiet
-              AND b.TuTiet<=c.DenTiet
-        ) THEN 1 ELSE 0 END AS TrungLichBan
-    FROM dbo.PhanCongCoiThi p
-    INNER JOIN dbo.CaThi c ON c.MaCa=p.MaCa
-)
-SELECT
-    MaDot,
-    MaGV,
-    COUNT(*) AS TongSoCa,
-    SUM(TrungLichBan) AS SoCaTrungLichBan,
-    CAST(100.0*(COUNT(*)-SUM(TrungLichBan))/NULLIF(COUNT(*),0) AS DECIMAL(5,2)) AS TyLeNeLichBan
-FROM X
-GROUP BY MaDot,MaGV;
+SELECT c.MaDot,N'RB6',N'Lịch bận mức 1',p.MaGV,c.MaCa,NULL,
+       CONCAT(N'GV ',p.MaGV,N' bị phân công trùng lịch bận mức 1 ngày ',
+              CONVERT(NVARCHAR(10),c.NgayThi,103),N', ca ',c.MaCa)
+FROM dbo.PhanCongCoiThi p
+INNER JOIN dbo.CaThi c ON c.MaCa=p.MaCa
+INNER JOIN dbo.LichBanGV b ON b.MaGV=p.MaGV AND b.UuTien=1 AND b.NgayBan=c.NgayThi
+    AND c.TuTiet<=b.DenTiet AND b.TuTiet<=c.DenTiet;
 GO
 
 CREATE OR ALTER PROCEDURE dbo.sp_KiemTraRangBuoc
@@ -698,108 +781,111 @@ CREATE OR ALTER PROCEDURE dbo.sp_KiemTraRangBuoc
 AS
 BEGIN
     SET NOCOUNT ON;
-
     IF NOT EXISTS(SELECT 1 FROM dbo.DotThi WHERE MaDot=@MaDot)
         THROW 53000,N'Đợt thi không tồn tại.',1;
 
-    ;WITH RB AS
-    (
-        SELECT CAST(N'RB1' AS NVARCHAR(10)) MaRB,N'Cân bằng định mức chính xác 100%' TenRangBuoc
-        UNION ALL SELECT N'RB2',N'Mỗi ca đúng số GV cần cấp'
-        UNION ALL SELECT N'RB3',N'GV không coi 2 ca trùng thời gian'
-        UNION ALL SELECT N'RB4',N'GV không trùng lịch dạy'
-        UNION ALL SELECT N'RB5',N'Đúng nhóm ca và phủ đủ nhóm trong buổi'
-    ),
-    V AS
-    (
-        SELECT MaRB,COUNT(*) SoViPham
-        FROM dbo.vw_ViPhamRangBuocCung
-        WHERE MaDot=@MaDot
-        GROUP BY MaRB
-    ),
-    RB1 AS
-    (
-        SELECT COUNT(*) SoViPham
+    DECLARE @RB TABLE(MaRB NVARCHAR(10) PRIMARY KEY,TenRangBuoc NVARCHAR(200),SoViPham INT);
+    INSERT @RB VALUES
+        (N'RB1',N'Định mức trong khoảng cho phép ±1 ca',0),
+        (N'RB2',N'Mỗi ca đúng số GV cần cấp',0),
+        (N'RB3',N'GV không coi 2 ca trùng thời gian',0),
+        (N'RB4',N'GV không trùng lịch dạy',0),
+        (N'RB5',N'Không trộn nhóm ca trong buổi',0),
+        (N'RB6',N'Né lịch bận mức 1',0);
+
+    UPDATE @RB SET SoViPham=(
+        SELECT COUNT(*)
         FROM dbo.DinhMucPhanCong d
-        WHERE d.MaDot=@MaDot
-          AND d.SoCaQuyDinh <>
-              (SELECT COUNT(*)
-               FROM dbo.PhanCongCoiThi p
-               INNER JOIN dbo.CaThi c ON c.MaCa=p.MaCa
-               WHERE c.MaDot=d.MaDot AND p.MaGV=d.MaGV)
-    ),
-    RB2 AS
-    (
-        SELECT COUNT(*) SoViPham
-        FROM dbo.CaThi c
-        WHERE c.MaDot=@MaDot
-          AND (SELECT COUNT(*) FROM dbo.PhanCongCoiThi p WHERE p.MaCa=c.MaCa)<>c.SoGVCanCap
-    ),
-    AllRB AS
-    (
-        SELECT N'RB1' MaRB,SoViPham FROM RB1
-        UNION ALL SELECT N'RB2',SoViPham FROM RB2
-        UNION ALL SELECT r.MaRB,ISNULL(v.SoViPham,0) FROM RB r LEFT JOIN V v ON v.MaRB=r.MaRB WHERE r.MaRB IN(N'RB3',N'RB4',N'RB5')
-    )
-    SELECT
-        r.MaRB,
-        r.TenRangBuoc,
-        a.SoViPham,
-        CASE WHEN a.SoViPham=0 THEN CAST(100.00 AS DECIMAL(5,2)) ELSE CAST(0.00 AS DECIMAL(5,2)) END AS PhanTramDat,
-        CASE WHEN a.SoViPham=0 THEN N'ĐẠT 100%' ELSE N'VI PHẠM' END AS KetQua
-    FROM RB r
-    INNER JOIN AllRB a ON a.MaRB=r.MaRB
-    ORDER BY r.MaRB;
+        LEFT JOIN dbo.CauHinhXepLich cfg ON cfg.MaDot=d.MaDot
+        CROSS APPLY (SELECT COUNT(*) AS SoCa
+                     FROM dbo.PhanCongCoiThi p JOIN dbo.CaThi c ON c.MaCa=p.MaCa
+                     WHERE c.MaDot=d.MaDot AND p.MaGV=d.MaGV) n
+        WHERE d.MaDot=@MaDot AND
+            ((d.SoCaQuyDinh=0 AND n.SoCa<>0) OR
+             (d.SoCaQuyDinh>0 AND ABS(n.SoCa-d.SoCaQuyDinh)>ISNULL(cfg.DoLechDinhMucChoPhep,1)))
+    ) WHERE MaRB=N'RB1';
+
+    UPDATE @RB SET SoViPham=(SELECT COUNT(*) FROM dbo.CaThi c
+        WHERE c.MaDot=@MaDot AND (SELECT COUNT(*) FROM dbo.PhanCongCoiThi p WHERE p.MaCa=c.MaCa)<>c.SoGVCanCap)
+        WHERE MaRB=N'RB2';
+    UPDATE r SET SoViPham=x.SoViPham
+    FROM @RB r
+    CROSS APPLY (SELECT COUNT(*) SoViPham FROM dbo.vw_ViPhamRangBuocCung v
+                 WHERE v.MaDot=@MaDot AND v.MaRB=r.MaRB) x
+    WHERE r.MaRB IN(N'RB3',N'RB4',N'RB5',N'RB6');
+
+    SELECT MaRB,TenRangBuoc,SoViPham,
+           CASE WHEN SoViPham=0 THEN CAST(100.00 AS DECIMAL(5,2)) ELSE CAST(0.00 AS DECIMAL(5,2)) END AS PhanTramDat,
+           CASE WHEN SoViPham=0 THEN N'ĐẠT 100%' ELSE N'VI PHẠM' END AS KetQua
+    FROM @RB ORDER BY MaRB;
 
     SELECT MaRB,LoaiViPham,MaGV,MaCa,MaCaLienQuan,MoTa
     FROM dbo.vw_ViPhamRangBuocCung
-    WHERE MaDot=@MaDot
+    WHERE MaDot=@MaDot AND MaRB<>N'RB1'
     UNION ALL
-    SELECT N'RB1',N'Thiếu định mức',d.MaGV,NULL,NULL,
-           CONCAT(N'GV ',d.MaGV,N' có ',
-                  (SELECT COUNT(*) FROM dbo.PhanCongCoiThi p INNER JOIN dbo.CaThi c ON c.MaCa=p.MaCa WHERE c.MaDot=d.MaDot AND p.MaGV=d.MaGV),
-                  N'/',d.SoCaQuyDinh,N' ca')
+    SELECT N'RB1',N'Ngoài khoảng định mức',d.MaGV,NULL,NULL,
+           CONCAT(N'GV ',d.MaGV,N' có ',n.SoCa,N' ca; định mức ',d.SoCaQuyDinh,
+                  N', cho phép ',CASE WHEN d.SoCaQuyDinh=0 THEN N'0'
+                       ELSE CONCAT(CASE WHEN d.SoCaQuyDinh-ISNULL(cfg.DoLechDinhMucChoPhep,1)<0 THEN 0 ELSE d.SoCaQuyDinh-ISNULL(cfg.DoLechDinhMucChoPhep,1) END,
+                                   N'–',d.SoCaQuyDinh+ISNULL(cfg.DoLechDinhMucChoPhep,1)) END)
     FROM dbo.DinhMucPhanCong d
-    WHERE d.MaDot=@MaDot
-      AND d.SoCaQuyDinh <>
-          (SELECT COUNT(*) FROM dbo.PhanCongCoiThi p INNER JOIN dbo.CaThi c ON c.MaCa=p.MaCa WHERE c.MaDot=d.MaDot AND p.MaGV=d.MaGV)
+    LEFT JOIN dbo.CauHinhXepLich cfg ON cfg.MaDot=d.MaDot
+    CROSS APPLY (SELECT COUNT(*) AS SoCa
+                 FROM dbo.PhanCongCoiThi p JOIN dbo.CaThi c ON c.MaCa=p.MaCa
+                 WHERE c.MaDot=d.MaDot AND p.MaGV=d.MaGV) n
+    WHERE d.MaDot=@MaDot AND
+        ((d.SoCaQuyDinh=0 AND n.SoCa<>0) OR
+         (d.SoCaQuyDinh>0 AND ABS(n.SoCa-d.SoCaQuyDinh)>ISNULL(cfg.DoLechDinhMucChoPhep,1)))
     UNION ALL
     SELECT N'RB2',N'Thiếu GV',NULL,c.MaCa,NULL,
            CONCAT(N'Ca ',c.MaCa,N' có ',(SELECT COUNT(*) FROM dbo.PhanCongCoiThi p WHERE p.MaCa=c.MaCa),N'/',c.SoGVCanCap,N' GV')
     FROM dbo.CaThi c
-    WHERE c.MaDot=@MaDot
-      AND (SELECT COUNT(*) FROM dbo.PhanCongCoiThi p WHERE p.MaCa=c.MaCa)<>c.SoGVCanCap
+    WHERE c.MaDot=@MaDot AND (SELECT COUNT(*) FROM dbo.PhanCongCoiThi p WHERE p.MaCa=c.MaCa)<>c.SoGVCanCap
     ORDER BY MaRB,MaGV,MaCa;
 
-    IF @ThrowIfFail=1
-    BEGIN
-        DECLARE @SoLoi INT;
-        SELECT @SoLoi=(SELECT COUNT(*) FROM dbo.DinhMucPhanCong d WHERE d.MaDot=@MaDot AND d.SoCaQuyDinh<>(SELECT COUNT(*) FROM dbo.PhanCongCoiThi p INNER JOIN dbo.CaThi c ON c.MaCa=p.MaCa WHERE c.MaDot=d.MaDot AND p.MaGV=d.MaGV))
-                    +(SELECT COUNT(*) FROM dbo.CaThi c WHERE c.MaDot=@MaDot AND (SELECT COUNT(*) FROM dbo.PhanCongCoiThi p WHERE p.MaCa=c.MaCa)<>c.SoGVCanCap)
-                    +(SELECT COUNT(*) FROM dbo.vw_ViPhamRangBuocCung WHERE MaDot=@MaDot AND MaRB IN(N'RB3',N'RB4',N'RB5'));
-        IF @SoLoi>0 THROW 53004,N'RB1-RB5 chưa đạt 100%. Lịch chưa được chốt.',1;
-    END
+    IF @ThrowIfFail=1 AND EXISTS(SELECT 1 FROM @RB WHERE SoViPham>0)
+        THROW 53004,N'RB1-RB6 chưa đạt. Lịch chưa được chốt.',1;
 END;
 GO
 
 CREATE OR ALTER PROCEDURE dbo.sp_ChotXepLich @MaDot VARCHAR(20)
 AS
 BEGIN
- SET NOCOUNT ON;
- DECLARE @N INT=(SELECT COUNT(*) FROM vw_ViPhamRangBuocCung WHERE MaDot=@MaDot);
- DECLARE @ThieuCa INT=(SELECT COUNT(*) FROM CaThi c WHERE c.MaDot=@MaDot AND (SELECT COUNT(*) FROM PhanCongCoiThi p WHERE p.MaCa=c.MaCa)<>c.SoGVCanCap);
- DECLARE @ThieuDinhMuc INT=(SELECT COUNT(*) FROM DinhMucPhanCong d WHERE d.MaDot=@MaDot AND (SELECT COUNT(*) FROM PhanCongCoiThi p JOIN CaThi c ON c.MaCa=p.MaCa WHERE c.MaDot=d.MaDot AND p.MaGV=d.MaGV)<>d.SoCaQuyDinh);
- IF @N>0 OR @ThieuCa>0 OR @ThieuDinhMuc>0 THROW 53001,N'Không thể chốt: còn vi phạm hoặc chưa đủ định mức/nhu cầu ca.',1;
- SELECT @MaDot MaDot,N'ĐẠT - có thể chốt lịch' KetQua;
+    SET NOCOUNT ON;
+    DECLARE @N INT=(SELECT COUNT(*) FROM dbo.vw_ViPhamRangBuocCung WHERE MaDot=@MaDot);
+    DECLARE @ThieuCa INT=(SELECT COUNT(*) FROM dbo.CaThi c WHERE c.MaDot=@MaDot AND
+        (SELECT COUNT(*) FROM dbo.PhanCongCoiThi p WHERE p.MaCa=c.MaCa)<>c.SoGVCanCap);
+    DECLARE @NgoaiDinhMuc INT=(SELECT COUNT(*)
+        FROM dbo.DinhMucPhanCong d
+        LEFT JOIN dbo.CauHinhXepLich cfg ON cfg.MaDot=d.MaDot
+        CROSS APPLY (SELECT COUNT(*) AS SoCa
+                     FROM dbo.PhanCongCoiThi p JOIN dbo.CaThi c ON c.MaCa=p.MaCa
+                     WHERE c.MaDot=d.MaDot AND p.MaGV=d.MaGV) n
+        WHERE d.MaDot=@MaDot AND
+            ((d.SoCaQuyDinh=0 AND n.SoCa<>0) OR
+             (d.SoCaQuyDinh>0 AND ABS(n.SoCa-d.SoCaQuyDinh)>ISNULL(cfg.DoLechDinhMucChoPhep,1))));
+    DECLARE @TongCa INT=(SELECT COUNT(*) FROM dbo.PhanCongCoiThi p JOIN dbo.CaThi c ON c.MaCa=p.MaCa WHERE c.MaDot=@MaDot);
+    DECLARE @CaTrungLichBan INT=(SELECT COUNT(*) FROM dbo.PhanCongCoiThi p JOIN dbo.CaThi c ON c.MaCa=p.MaCa
+        WHERE c.MaDot=@MaDot AND EXISTS(SELECT 1 FROM dbo.LichBanGV b WHERE b.MaGV=p.MaGV AND b.UuTien IN(2,3)
+            AND b.NgayBan=c.NgayThi AND c.TuTiet<=b.DenTiet AND b.TuTiet<=c.DenTiet));
+    DECLARE @TyLeNeLichBan DECIMAL(5,2)=CASE WHEN @TongCa=0 THEN 100.00 ELSE 100.0*(@TongCa-@CaTrungLichBan)/@TongCa END;
+    DECLARE @TyLeToiThieu DECIMAL(5,2)=(SELECT TyLeNeLichBanToiThieu FROM dbo.CauHinhXepLich WHERE MaDot=@MaDot);
+    IF @N>0 OR @ThieuCa>0 OR @NgoaiDinhMuc>0
+        THROW 53001,N'Không thể chốt: RB1-RB6 chưa đạt.',1;
+    IF @TyLeNeLichBan<@TyLeToiThieu
+        THROW 53005,N'Tỷ lệ né lịch bận mức 2-3 thấp hơn ngưỡng tối thiểu của đợt thi.',1;
+    SELECT @MaDot MaDot,N'ĐẠT - có thể chốt lịch' KetQua,@TyLeNeLichBan TyLeNeLichBan,@TyLeToiThieu TyLeNeToiThieu;
 END;
 GO
 
+
+/* 06. Trigger bao ve rang buoc khi co thay doi truc tiep tren bang phan cong/lich day. */
 /* ========================= TRIGGER CHẶN VI PHẠM TỨC THỜI ========================= */
 CREATE OR ALTER TRIGGER dbo.trg_PhanCong_RangBuocCung ON PhanCongCoiThi AFTER INSERT,UPDATE AS
 BEGIN
  SET NOCOUNT ON;
  DECLARE @Loi NVARCHAR(1000);
- SELECT TOP 1 @Loi=CONCAT(N'[',v.MaRB,N'] ',v.MoTa) FROM vw_ViPhamRangBuocCung v WHERE v.MaRB IN(N'RB1',N'RB2',N'RB3',N'RB4',N'RB5') AND ((v.MaGV IN(SELECT MaGV FROM inserted)) OR (v.MaCa IN(SELECT MaCa FROM inserted)) OR (v.MaCaLienQuan IN(SELECT MaCa FROM inserted)));
+ SELECT TOP 1 @Loi=CONCAT(N'[',v.MaRB,N'] ',v.MoTa) FROM vw_ViPhamRangBuocCung v WHERE v.MaRB IN(N'RB1',N'RB2',N'RB3',N'RB4',N'RB5',N'RB6') AND ((v.MaGV IN(SELECT MaGV FROM inserted)) OR (v.MaCa IN(SELECT MaCa FROM inserted)) OR (v.MaCaLienQuan IN(SELECT MaCa FROM inserted)));
  IF @Loi IS NOT NULL BEGIN ROLLBACK; THROW 53002,@Loi,1; END;
 END;
 GO
@@ -817,6 +903,7 @@ BEGIN
 END;
 GO
 
+/* 07. Du lieu mau Khoa CNTT, 53 giang vien, dot thi va 2 dinh muc vi du. */
 /* ========================= DỮ LIỆU KHOA CNTT + 53 GV ========================= */
 INSERT Khoa(MaKhoa,TenKhoa) VALUES('CNTT',N'Khoa Công nghệ Thông tin');
 INSERT BoMon(MaBoMon,MaKhoa,TenBoMon) VALUES
@@ -897,13 +984,19 @@ INSERT DinhMucPhanCong(MaDot,MaGV,TyLeDinhMuc) VALUES
 ('DOT2026_01','GV0001',100),('DOT2026_01','GV0002',50);
 GO
 
-/* Các truy vấn quản trị thường dùng */
--- EXEC dbo.sp_DanhSachGiangVien @MaKhoa='CNTT';
--- EXEC dbo.sp_ThemGiangVien 'GV9999',N'Người mới',N'Thạc sĩ',N'Giảng viên','email@huit.edu.vn',NULL,'KHDL';
--- EXEC dbo.sp_SuaGiangVien 'GV9999',N'Người mới cập nhật',N'Tiến sĩ',N'Giảng viên','new@huit.edu.vn',NULL,'KHDL',N'Đang công tác';
--- EXEC dbo.sp_XoaGiangVien 'GV9999'; -- ngừng công tác
--- EXEC dbo.sp_TinhDinhMucTheoTyLe 'DOT2026_01';
--- EXEC dbo.sp_DatDinhMucChung 'DOT2026_01',100,NULL; -- áp dụng cho toàn bộ GV đang công tác
--- EXEC dbo.sp_DatDinhMucChung 'DOT2026_01',100,'CNTT'; -- áp dụng riêng Khoa CNTT
--- EXEC dbo.sp_KiemTraRangBuoc 'DOT2026_01';
--- EXEC dbo.sp_ChotXepLich 'DOT2026_01';
+/* Tao tai khoan portal cho cac giang vien dang cong tac. Backend xu ly mat khau tam khi dang nhap lan dau. */
+/* Tạo tài khoản cho giảng viên hiện có; mật khẩu tạm 1 được xử lý ở backend,
+   chỉ được dùng để vào luồng đổi mật khẩu lần đầu. */
+INSERT INTO dbo.TaiKhoanGiangVien(MaGV, PasswordHash, MustChangePassword, IsActive)
+SELECT gv.MaGV, NULL, 1, 1
+FROM dbo.GiangVien gv
+WHERE gv.TrangThai=N'Đang công tác'
+  AND NOT EXISTS (SELECT 1 FROM dbo.TaiKhoanGiangVien tk WHERE tk.MaGV=gv.MaGV);
+GO
+
+/* 08. Goi y thao tac sau khi cai dat (bo comment tung lenh can dung). */
+-- EXEC dbo.sp_DatDinhMucChung @MaDot='DOT2026_01', @TyLe=100, @MaKhoa='CNTT';
+-- EXEC dbo.sp_TinhDinhMucTheoTyLe @MaDot='DOT2026_01';
+-- EXEC dbo.sp_KiemTraRangBuoc @MaDot='DOT2026_01';
+-- EXEC dbo.sp_ChotXepLich @MaDot='DOT2026_01';
+GO

@@ -31,7 +31,18 @@ Kiểm tra: `http://127.0.0.1:8000/api/kiem-tra-ket-noi`
 
 Swagger: `http://127.0.0.1:8000/docs`
 
-## 4. Chạy giao diện
+## 4. Đặt lại mật khẩu Admin thủ công
+
+Không thể xem lại mật khẩu cũ vì cơ sở dữ liệu chỉ lưu bản băm. Nhà phát triển có thể đặt mật khẩu mới trực tiếp vào tài khoản Admin bằng lệnh dưới đây:
+
+```powershell
+cd C:\KhoaLuan_XepLichCaThi\backend
+.\.venv\Scripts\python.exe .\reset_admin_password.py
+```
+
+Nhập mật khẩu mới hai lần khi được hỏi. Script chấp nhận bất kỳ mật khẩu nào không để trống và chỉ in thông báo thành công, không hiển thị mật khẩu.
+
+## 5. Chạy giao diện
 
 Mở thư mục gốc bằng VS Code và chạy `index.html` bằng Live Server. Giao diện gọi API tại `http://127.0.0.1:8000/api`.
 

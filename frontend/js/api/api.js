@@ -13,6 +13,17 @@ window.API = (() => {
   }
   return {
     async health(){return req('/kiem-tra-ket-noi')},
+    async adminNotifications(){return req('/user/admin/notifications')},
+    async userAccounts(){
+      try{return await req('/user/admin/accounts')}
+      catch(e){
+        if(e.detail!=='Not Found')throw e;
+        // Backend chưa nạp endpoint mới: dùng danh sách giảng viên từ SQL Server làm phương án dự phòng.
+        const r=await req('/giang-vien');
+        return {items:(r.items||[]).map(x=>({...x,IsActive:true,MustChangePassword:null,TrangThaiGiangVien:x.TrangThai,AccountStatusKnown:false}))};
+      }
+    },
+    async resetUserPassword(maGV, username, currentPassword){return req('/user/admin/accounts/'+encodeURIComponent(maGV)+'/reset-password',{method:'POST',body:JSON.stringify({username,current_password:currentPassword})})},
     async solveSchedule(payload){return req('/xep-lich/cpsat',{method:'POST',body:JSON.stringify(payload)})},
     async latestDot(){return req('/dot-thi/moi-nhat')},
     async dots(){return req('/dot-thi')},
@@ -23,6 +34,7 @@ window.API = (() => {
     async createExam(x){return req('/ca-thi',{method:'POST',body:JSON.stringify(x)})},
     async updateExam(id,x){return req('/ca-thi/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(x)})},
     async deleteExam(id){return req('/ca-thi/'+encodeURIComponent(id),{method:'DELETE'})},
+    async saveAssignments(maDot,assignments){return req('/dot-thi/'+encodeURIComponent(maDot)+'/phan-cong',{method:'POST',body:JSON.stringify({assignments})})},
     async lecturers(dot){return req('/giang-vien'+(dot?'?ma_dot='+encodeURIComponent(dot):''))},
     async createLecturer(x){return req('/giang-vien',{method:'POST',body:JSON.stringify(x)})},
     async updateLecturer(id,x){return req('/giang-vien/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(x)})},

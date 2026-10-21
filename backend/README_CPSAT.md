@@ -25,13 +25,13 @@ Từ thư mục `backend` trong PowerShell:
 5. Giao diện cập nhật lịch, thống kê và lưu trạng thái ứng dụng hiện có.
 
 ## Các ràng buộc được mô hình hóa
-
 - Mỗi ca thi có đúng số giảng viên cần cấp.
 - Mỗi giảng viên được phân đúng số lượt theo tỷ lệ định mức.
 - Không phân công trùng thời gian cho cùng giảng viên.
 - Không xếp gác trùng lịch dạy.
 - Tránh lịch bận ưu tiên mức 1 như ràng buộc cứng; lịch bận mức 2/3 được tính điểm phạt.
 - Không xếp hai loại hình thi khác nhau trong cùng buổi/ngày cho một giảng viên.
+- Ranh giới buổi khớp với SQL: tiết 1–6, 7–12 và 13–16.
 - Giữ các phân công đã khóa.
 - Có hàm mục tiêu ưu tiên giảm lịch bận và giảm khoảng trống giữa các buổi trong ngày.
 

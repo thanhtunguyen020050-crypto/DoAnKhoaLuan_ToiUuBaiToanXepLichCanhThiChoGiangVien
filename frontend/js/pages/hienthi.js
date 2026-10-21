@@ -4,13 +4,13 @@ function render(){
   const app=$('#app');
   if(!cur){app.innerHTML=loginView();return}
   if(!canSee(view))view='home';
-  const pages={home:homeView,sys:sysView,lec:lecView,exam:examView,cons:consView,sched:schedView,rep:repView};
+  const pages={home:homeView,sys:sysView,lec:lecView,exam:examView,cons:consView,sched:schedView,rep:repView,accounts:accountsView};
   app.innerHTML=topbar()+'<div class="shell">'+sidebar()+'<main class="main">'+pages[view]()+'</main></div>';
-  const lc=$('#lcount');if(lc)lc.textContent=S.lecs.length+' giảng viên';
+  const lc=$('#lcount');if(lc)lc.textContent=S.lecs.length+' giảng viên';refreshAdminBell();
 }
 function snapshot(mode){
   const a=analyze();
-  S.hist.push({id:S.nid++,time:new Date().toLocaleString('vi-VN'),mode:mode,count:a.assigned,pct:a.overall,snap:S.exams.map(e=>[e.id,e.asg.map(x=>[x.l,x.lock?1:0])])});
+  S.hist.push({id:S.nid++,time:new Date().toLocaleString('vi-VN'),mode:mode,count:a.assigned,pct:a.overall,s1:{on:a.S1.enabled,weight:a.S1.weight,gapDays:a.S1.fragmentedDays,gapEvents:a.S1.gapEvents,idlePeriods:a.S1.idlePeriods,sessionBreaks:a.S1.sessionBreaks,penaltyUnits:a.S1.penaltyUnits,penalty:a.S1.penalty,lecturerDays:a.S1.total,multiShiftDays:a.S1.multiShiftDays},snap:S.exams.map(e=>[e.id,e.asg.map(x=>[x.l,x.lock?1:0])])});
   if(S.hist.length>20)S.hist.shift();
 }
 function lecForm(l){

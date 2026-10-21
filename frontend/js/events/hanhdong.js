@@ -7,8 +7,47 @@ const A={
     if(!p){er.textContent='Hãy nhập mật khẩu.';return}
     cur=acc;view='home';render();
   },
-  logout(){cur=null;render()},
-  go(t){view=t.dataset.v;render();window.scrollTo(0,0)},
+  async 'admin-notifications'(){
+    try{
+      const r=await API.adminNotifications();
+      const items=r.items||[];localStorage.setItem('huit-admin-seen',String(Math.max(0,...items.map(x=>x.ID))));refreshAdminBell(true);
+      openModal({title:'Thông báo đổi ca',wide:true,body:items.length?'<div class="pcl">'+items.map(x=>'<div class="pc"><div class="t"><b>'+esc(x.TieuDe)+'</b><span>'+esc(x.NoiDung)+'</span><span class="hint">'+esc(x.TaoLuc||'')+'</span></div></div>').join('')+'</div>':'<p class="muted">Chưa có thông báo đổi ca.</p>',foot:'<button class="btn pri" data-act="close">Đóng</button>'});
+    }catch(e){toast('Không tải được thông báo: '+e.message)}
+  },
+  'change-admin-password'(){
+    openModal({title:'Đổi mật khẩu Admin',body:'<p class="muted">Mật khẩu được lưu dạng băm trong SQL Server.</p><label class="f"><span>Mật khẩu hiện tại</span><input type="password" id="adminOldPass" autocomplete="current-password"></label><label class="f"><span>Mật khẩu mới</span><input type="password" id="adminNewPass" minlength="8" maxlength="16" autocomplete="new-password"></label><label class="f"><span>Nhập lại mật khẩu mới</span><input type="password" id="adminConfirmPass" minlength="8" maxlength="16" autocomplete="new-password"></label><p class="hint">Mật khẩu mới dài 8–16 ký tự, có ít nhất một chữ in hoa (A–Z) và một ký tự đặc biệt (@, #, $...).</p><div class="err" id="adminPassErr" role="alert"></div>',foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="save-admin-password">Đổi mật khẩu</button>'});
+  },
+  async 'save-admin-password'(){
+    const oldp=$('#adminOldPass').value, newp=$('#adminNewPass').value, confirm=$('#adminConfirmPass').value, er=$('#adminPassErr');
+    er.textContent='';
+    if(newp!==confirm){er.textContent='Mật khẩu nhập lại không khớp.';return}
+    if(newp.length<8||newp.length>16||!/[A-Z]/.test(newp)||!/[^A-Za-z0-9]/.test(newp)){er.textContent='Mật khẩu mới phải dài 8–16 ký tự, có chữ in hoa và ký tự đặc biệt.';return}
+    try{
+      const r=await fetch((window.API_BASE_URL||'http://127.0.0.1:8000/api')+'/auth/admin-change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:sessionStorage.getItem('authUsername')||'admin',current_password:oldp,new_password:newp})});
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(typeof d.detail==='string'?d.detail:'Không đổi được mật khẩu.');
+      closeModal();toast('Đã đổi mật khẩu Admin thành công.');
+    }catch(e){er.textContent=e.message||'Không kết nối được backend.'}
+  },
+  logout(){cur=null;sessionStorage.removeItem('authRole');sessionStorage.removeItem('authUsername');sessionStorage.removeItem('lecturerSession');sessionStorage.removeItem('mustChangePassword');location.replace('login.html')},
+  go(t){view=t.dataset.v;render();window.scrollTo(0,0);if(view==='accounts')A['load-user-accounts']()},
+  async 'load-user-accounts'(){accountsLoading=true;accountsError='';render();try{const r=await API.userAccounts();adminAccounts=r.items||[]}catch(e){accountsError=e.message==='Not Found'?'Backend chưa nhận API quản lý account. Hãy khởi động lại backend rồi bấm “Tải lại từ CSDL”.':(e.message||'Không tải được danh sách tài khoản.')}finally{accountsLoading=false;render()}},
+  'reset-user-password'(t){
+    const maGV=t.dataset.id, account=adminAccounts.find(a=>String(a.MaGV)===String(maGV));
+    openModal({title:'Cấp mật khẩu tạm',body:'<p class="muted">Cấp mật khẩu mới cho <b>'+esc(account&&account.HoTen||maGV)+'</b> ('+esc(maGV)+'). Mật khẩu hiện tại sẽ mất hiệu lực.</p><label class="f"><span>Nhập lại mật khẩu Admin để xác nhận</span><input type="password" id="resetAdminPassword" autocomplete="current-password" required></label><div class="err" id="resetPasswordError" role="alert"></div>',foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="confirm-reset-user-password" data-id="'+esc(maGV)+'">Cấp mật khẩu tạm</button>'});
+  },
+  async 'confirm-reset-user-password'(t){
+    const maGV=t.dataset.id, error=$('#resetPasswordError'), password=$('#resetAdminPassword').value;
+    error.textContent='';
+    if(!password){error.textContent='Nhập mật khẩu Admin để xác nhận.';return}
+    try{
+      const r=await API.resetUserPassword(maGV,sessionStorage.getItem('authUsername')||'admin',password);
+      const account=adminAccounts.find(a=>String(a.MaGV)===String(maGV));
+      if(account){account.MustChangePassword=true;account.AccountStatusKnown=true}
+      const shown=r.temporary_password||'';
+      openModal({title:'Mật khẩu tạm đã được cấp',body:'<p>Gửi mật khẩu này trực tiếp cho user. Mật khẩu chỉ hiện ở đây một lần; user phải đổi mật khẩu sau khi đăng nhập.</p><label class="f"><span>Tài khoản: '+esc(maGV)+'</span><input type="text" readonly value="'+esc(shown)+'" onclick="this.select()"></label>',foot:'<button class="btn pri" data-act="close">Đã lưu mật khẩu</button>'});
+    }catch(e){error.textContent=e.message||'Không thể cấp mật khẩu tạm.'}
+  },
   close(){closeModal()},
   ovclose(t,e){if(e.target===t)closeModal()},
   logo(){$('#logoFile').click()},
@@ -140,9 +179,8 @@ const A={
   'pick-exam-file'(){$('#fileExam').click()},
   'add-exam'(){examForm()},
   async 'save-exam'(t){
-    const date=parseDate($('#exDate').value),period=$('#exPeriod').value,slot=parsePeriod(period),kind=$('#exKind').value,need=parseInt($('#exNeed').value,10),hk=$('#exHK').value,yh=$('#exYear').value,er=$('#exErr');
+    const date=parseDate($('#exDate').value),period=$('#exPeriod').value,slot=parsePeriod(period),kind=$('#exKind').value,need=parseInt($('#exNeed').value,10),old=t.dataset.id?exm(+t.dataset.id):null,dots=S.dots||[],dot=(old&&dots.find(d=>d.MaDot===old.ma_dot))||dots.find(d=>date&&String(d.NgayBatDau).slice(0,10)<=date&&String(d.NgayKetThuc).slice(0,10)>=date)||dots[0]||{},now=new Date().getFullYear(),hk=old&&old.hoc_ky||dot.HocKy||'HK1',yh=old&&old.nam_hoc||dot.NamHoc||(now+'-'+(now+1)),er=$('#exErr');
     if(!date){er.textContent='Hãy chọn ngày thi.';return}if(!slot){er.textContent='Tiết/ca không hợp lệ.';return}if(isNaN(need)||need<1||need>30){er.textContent='Số giảng viên cần từ 1 đến 30.';return}
-    const old=t.dataset.id?exm(+t.dataset.id):null;
     if(old&&need<old.asg.length){er.textContent='Số giảng viên cần không thể thấp hơn số người đã được phân công.';return}
     try{
       const payload={ma_dot:old?old.ma_dot:null,hoc_ky:hk,nam_hoc:yh,ngay_thi:date,tu_tiet:slot.start,den_tiet:slot.end,hinh_thuc_thi:kind==='TL'?'Tự luận':'Lý thuyết',so_gv_can_cap:need};
@@ -167,10 +205,11 @@ const A={
   async 'force-run'(){await autoRun()},
   pick(t){pick={ex:+t.dataset.ex,q:''};const e=exm(pick.ex);openModal({title:'Chọn giảng viên · '+(e.period||SES[e.ses])+', '+fmtD(e.date),wide:true,body:'<p class="muted">'+LB[e.kind]+' · cần '+e.need+' giảng viên</p><div class="tools" style="margin-top:10px"><div class="grow"><input type="text" data-inp="pick-q" placeholder="Tìm giảng viên" aria-label="Tìm giảng viên"></div><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="lockNew" checked>Khóa phân công này</label></div><div class="pl" id="pickList">'+pickList()+'</div>'})},
   'pick-ok'(t){
-    const e=exm(pick.ex),lid=+t.dataset.l;if(e.asg.length>=e.need){toast('Ca thi đã đủ giảng viên cần phân công.');return}const issues=hardIssues(e,lid);if(issues.length){toast('Không thể phân công: '+issues.join(', '));return}const lock=$('#lockNew').checked;e.asg.push({l:lid,lock:lock});closeModal();render();
+    const e=exm(pick.ex),lid=t.dataset.l;if(e.asg.length>=e.need){toast('Ca thi đã đủ giảng viên cần phân công.');return}const issues=hardIssues(e,lid);if(issues.length){toast('Không thể phân công: '+issues.join(', '));return}const lock=$('#lockNew').checked;e.asg.push({l:lid,lock:lock});closeModal();render();
   },
-  lock(t){const e=exm(+t.dataset.ex),a=e.asg.find(x=>x.l===+t.dataset.l);a.lock=!a.lock;render()},
-  unasg(t){const e=exm(+t.dataset.ex);e.asg=e.asg.filter(x=>x.l!==+t.dataset.l);render()},
+  async 'publish-assignments'(){try{const r=await persistAssignments();toast('Đã lưu '+r.assignments_saved+' lượt phân công lên SQL Server. Trang giảng viên có thể làm mới để xem lịch.')}catch(e){toast(e.message||'Không lưu được phân công lên SQL Server.')}},
+  lock(t){const e=exm(+t.dataset.ex),a=e.asg.find(x=>String(x.l)===String(t.dataset.l));a.lock=!a.lock;render()},
+  unasg(t){const e=exm(+t.dataset.ex);e.asg=e.asg.filter(x=>String(x.l)!==String(t.dataset.l));render()},
   'clear-unlocked'(){let n=0;S.exams.forEach(e=>{const k=e.asg.filter(a=>a.lock);n+=e.asg.length-k.length;e.asg=k});render();toast('Đã xóa '+n+' phân công chưa khóa.')},
   'save-hist'(){snapshot('Thủ công');render();toast('Đã lưu bản này vào lịch sử.')},
   tab6(t){tab6=t.dataset.t;render()},
@@ -185,10 +224,27 @@ const A={
       ws['!cols']=d.head.map((h,i)=>({wch:Math.min(40,Math.max(String(h).length,...d.rows.map(r=>String(r[i]==null?'':r[i]).length))+2)}));
       XLSX.utils.book_append_sheet(wb,ws,names[m]);n++;
     });
-     if(!n){toast('Chưa có dữ liệu để xuất.');return}
+    if(!n){toast('Chưa có dữ liệu để xuất.');return}
+    const gap=analyze().S1,gapRows=[
+      ['Chỉ số ca gãy','Giá trị'],
+      ['Ràng buộc S1',gap.enabled?'Đang bật':'Đang tắt'],
+      ['Mức ưu tiên S1',gap.weight],
+      ['Tỷ lệ ngày không gãy',gap.total?Math.round((gap.total-gap.fragmentedDays)/gap.total*100)+'%':'—'],
+      ['Số GV-ngày bị gãy',gap.fragmentedDays],
+      ['Số khoảng gãy giữa ca',gap.gapEvents],
+      ['Tổng tiết trống giữa ca',gap.idlePeriods],
+      ['Số lần gãy do qua buổi',gap.sessionBreaks],
+      ['Đơn vị phạt S1',gap.penaltyUnits],
+      ['Điểm phạt S1',gap.penalty],
+      ['Tổng GV-ngày lên trường',gap.total],
+      ['GV-ngày có nhiều ca',gap.multiShiftDays]
+    ];
+    const gapWs=XLSX.utils.aoa_to_sheet(gapRows);
+    gapWs['!cols']=[{wch:34},{wch:24}];
+    XLSX.utils.book_append_sheet(wb,gapWs,'Chỉ số ca gãy');n++;
     const t=new Date(),pad=x=>String(x).padStart(2,'0');
     XLSX.writeFile(wb,'lich-gac-thi-'+t.getFullYear()+pad(t.getMonth()+1)+pad(t.getDate())+'.xlsx');
-     toast('Đã tải file Excel gồm '+n+' trang, có bảng ma trận theo mẫu phân công.');
+    toast('Đã tải file Excel gồm '+n+' trang, có bảng ma trận và chỉ số ca gãy.');
   },
   copy(){const d=exportData(F.xm);copyText([d.head].concat(d.rows).map(r=>r.join('\t')).join('\n'))},
   restore(t){

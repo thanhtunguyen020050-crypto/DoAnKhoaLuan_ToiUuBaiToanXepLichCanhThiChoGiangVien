@@ -72,6 +72,13 @@ class CaThiIn(BaseModel):
     hinh_thuc_thi: str = Field(pattern=r'^(Lý thuyết|Tự luận)$')
     so_gv_can_cap: int = Field(ge=1, le=30)
 
+class PhanCongItemIn(BaseModel):
+    ma_ca: str = Field(min_length=1, max_length=50)
+    ma_gv: str = Field(min_length=1, max_length=20)
+
+class LuuPhanCongIn(BaseModel):
+    assignments: list[PhanCongItemIn] = Field(default_factory=list)
+
 class DinhMucChungIn(BaseModel):
     ma_dot: str = Field(min_length=1, max_length=20)
     ty_le: float = Field(ge=0, le=100)
@@ -220,6 +227,41 @@ def list_exam_shifts(ma_dot:str|None=None):
             return {'items':dict_rows(cur)}
     except Exception as e: raise HTTPException(500,f'Lỗi đọc ca thi: {e}')
 
+@app.post('/api/dot-thi/{ma_dot}/phan-cong')
+def save_exam_assignments(ma_dot:str,x:LuuPhanCongIn):
+    """Replace an exam period's persisted assignments with the current schedule."""
+    pairs=[(a.ma_ca.strip(),a.ma_gv.strip()) for a in x.assignments]
+    if len(pairs)!=len(set(pairs)):
+        raise HTTPException(400,'Danh sách có phân công bị lặp.')
+    try:
+        with get_connection() as cn:
+            cur=cn.cursor()
+            # Stage small scalar parameters instead of sending a large JSON LOB.
+            # This avoids ODBC Driver 17 precision/NTEXT problems on UTF-8 SQL databases.
+            cur.execute('CREATE TABLE #LuuPhanCong (MaCa VARCHAR(50) COLLATE DATABASE_DEFAULT NOT NULL, MaGV VARCHAR(20) COLLATE DATABASE_DEFAULT NOT NULL, PRIMARY KEY(MaCa,MaGV))')
+            if pairs:
+                cur.executemany('INSERT INTO #LuuPhanCong(MaCa,MaGV) VALUES (?,?)',pairs)
+
+            cur.execute('SELECT TOP 1 r.MaCa FROM #LuuPhanCong r LEFT JOIN dbo.CaThi c ON c.MaCa=r.MaCa AND c.MaDot=? WHERE c.MaCa IS NULL',ma_dot)
+            if cur.fetchone():
+                raise HTTPException(400,'Danh sách có ca thi không thuộc đợt thi đã chọn.')
+            cur.execute("SELECT TOP 1 r.MaGV FROM #LuuPhanCong r LEFT JOIN dbo.GiangVien g ON g.MaGV=r.MaGV AND g.TrangThai=N'Đang công tác' WHERE g.MaGV IS NULL")
+            if cur.fetchone():
+                raise HTTPException(400,'Danh sách có giảng viên không tồn tại hoặc không còn công tác.')
+
+            cur.execute('DELETE p FROM dbo.PhanCongCoiThi p INNER JOIN dbo.CaThi c ON c.MaCa=p.MaCa WHERE c.MaDot=?',ma_dot)
+            cur.execute('INSERT INTO dbo.PhanCongCoiThi(MaCa,MaGV) SELECT MaCa,MaGV FROM #LuuPhanCong')
+            cur.execute('EXEC dbo.sp_KiemTraRangBuoc ?,1',ma_dot)
+            _drain(cur)
+            cur.execute('EXEC dbo.sp_ChotXepLich ?',ma_dot)
+            _drain(cur)
+            cn.commit()
+            return {'ok':True,'ma_dot':ma_dot,'assignments_saved':len(pairs)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400,f'Không lưu được phân công vào SQL Server: {e}')
+
 def _thu_vn(date_str):
     import datetime
     d=datetime.date.fromisoformat(date_str); names=['Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7','Chủ nhật']; return names[d.weekday()]
@@ -239,6 +281,12 @@ def create_exam_shift(x:CaThiIn):
         with get_connection() as cn:
             cur=cn.cursor()
             cur.execute('SELECT MaDot,NgayBatDau,NgayKetThuc FROM dbo.DotThi WHERE MaDot=?',(ma_dot,)); dot=cur.fetchone()
+            # A period may already exist under a manually assigned MaDot. Reuse
+            # that period instead of trying to create a duplicate HK/year row.
+            if not dot:
+                cur.execute('SELECT MaDot,NgayBatDau,NgayKetThuc FROM dbo.DotThi WHERE HocKy=? AND NamHoc=?',(x.hoc_ky,x.nam_hoc)); dot=cur.fetchone()
+                if dot:
+                    ma_dot=dot[0]
             if not dot:
                 cur.execute('EXEC dbo.sp_ThemDotThi ?,?,?,?,?,?,?',ma_dot,f'Đợt thi {x.hoc_ky} năm học {x.nam_hoc}',x.hoc_ky,x.nam_hoc,x.ngay_thi,x.ngay_thi,'Tạo tự động từ form tiếp nhận lịch thi'); _drain(cur)
             else:
@@ -344,13 +392,13 @@ def busy_schedule(ma_gv:str):
         with get_connection() as cn:
             cur=cn.cursor()
             cur.execute('''
-SELECT ID,CONVERT(varchar(10),NgayBan,23) NgayBan,TuTiet,DenTiet,LyDo
+SELECT ID,CONVERT(varchar(10),NgayBan,23) NgayBan,TuTiet,DenTiet,LyDo,UuTien
 FROM dbo.LichBanGV WHERE MaGV=? ORDER BY NgayBan,TuTiet
 ''',ma_gv)
             rows=dict_rows(cur)
             for x in rows:
-                # Dữ liệu cũ có thể chưa có lý do: coi là mức 3 (mềm nhất), không biến thành hard constraint.
-                x['UuTien']=BUSY_REASONS.get(x.get('LyDo'), 3)
+                # Ưu tiên là dữ liệu chính thức; fallback giữ tương thích DB cũ.
+                x['UuTien']=x.get('UuTien') or BUSY_REASONS.get(x.get('LyDo'), 3)
             return {'items':rows}
     except Exception as e: raise HTTPException(500,f'Lỗi đọc lịch bận: {e}')
 
@@ -366,7 +414,8 @@ def replace_busy(ma_gv:str,items:list[dict]):
                 ly_do=x.get('ly_do')
                 if ly_do not in BUSY_REASONS and ly_do is not None:
                     raise HTTPException(400,'Lý do lịch bận không hợp lệ.')
-                cur.execute('EXEC dbo.sp_ThemLichBanGV ?,?,?,?,?',ma_gv,x['ngay_ban'],x['tu_tiet'],x['den_tiet'],ly_do)
+                uu_tien=BUSY_REASONS.get(ly_do,3)
+                cur.execute('EXEC dbo.sp_ThemLichBanGV ?,?,?,?,?,?',ma_gv,x['ngay_ban'],x['tu_tiet'],x['den_tiet'],ly_do,uu_tien)
             cn.commit(); return {'ok':True,'count':len(items)}
     except HTTPException: raise
     except Exception as e: raise HTTPException(400,f'Lỗi lưu lịch bận: {e}')
@@ -432,7 +481,7 @@ def import_busy(rows:list[LichBanImportRow], filename:str|None=None):
 
             for ma,ten,d,ses,reason,line in grouped.values():
                 start,end=allowed_sessions[ses]
-                cur.execute('EXEC dbo.sp_ThemLichBanGV ?,?,?,?,?',ma,d.isoformat(),start,end,reason)
+                cur.execute('EXEC dbo.sp_ThemLichBanGV ?,?,?,?,?,?',ma,d.isoformat(),start,end,reason,BUSY_REASONS[reason])
 
             cn.commit()
             return {
@@ -445,3 +494,91 @@ def import_busy(rows:list[LichBanImportRow], filename:str|None=None):
             }
     except HTTPException: raise
     except Exception as e: raise HTTPException(400,f'Lỗi import lịch bận: {e}')
+try:
+    from .routers.user_portal import router as user_portal_router
+except ImportError:
+    from routers.user_portal import router as user_portal_router
+
+app.include_router(user_portal_router)
+
+# ===== Xác thực Admin lưu trong SQL Server =====
+import hashlib, secrets
+from fastapi import Body
+def _hash_password(password: str, salt: str) -> str:
+    dk = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt.encode('utf-8'), 260000)
+    return dk.hex()
+
+def _ensure_admin_table(cur):
+    """Tạo bảng TaiKhoanAdmin nếu chưa tồn tại và seed tài khoản admin mặc định."""
+    cur.execute("""
+        IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='TaiKhoanAdmin' AND schema_id=SCHEMA_ID('dbo'))
+        CREATE TABLE dbo.TaiKhoanAdmin (
+            TenDangNhap NVARCHAR(120) PRIMARY KEY,
+            MatKhauHash NVARCHAR(200) NOT NULL,
+            Salt        NVARCHAR(64)  NOT NULL,
+            TaoLuc      DATETIME      DEFAULT GETDATE()
+        )
+    """)
+    # Older project databases already have TaiKhoanAdmin but predate salted
+    # password hashes. Add the nullable column so the admin reset can migrate it.
+    cur.execute("""
+        IF COL_LENGTH(N'dbo.TaiKhoanAdmin', N'Salt') IS NULL
+            ALTER TABLE dbo.TaiKhoanAdmin ADD Salt NVARCHAR(64) NULL
+    """)
+    cur.execute("SELECT 1 FROM dbo.TaiKhoanAdmin WHERE TenDangNhap=N'admin'")
+    if not cur.fetchone():
+        salt = secrets.token_hex(16)
+        pw_hash = _hash_password('admin123', salt)
+        cur.execute("INSERT INTO dbo.TaiKhoanAdmin (TenDangNhap,MatKhauHash,Salt) VALUES (N'admin',?,?)", pw_hash, salt)
+
+@app.post('/api/auth/admin-login')
+def admin_login(payload: dict = Body(...)):
+    username = str(payload.get('username', '')).strip()
+    password = str(payload.get('password', ''))
+    if not username or not password:
+        raise HTTPException(status_code=400, detail='Vui lòng nhập tên đăng nhập và mật khẩu.')
+    try:
+        with get_connection() as cn:
+            cur = cn.cursor()
+            _ensure_admin_table(cur)
+            cn.commit()
+            cur.execute("SELECT MatKhauHash, Salt FROM dbo.TaiKhoanAdmin WHERE TenDangNhap=?", username)
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=401, detail='Tên đăng nhập hoặc mật khẩu không đúng.')
+            pw_hash, salt = row
+            if not secrets.compare_digest(_hash_password(password, salt), pw_hash):
+                raise HTTPException(status_code=401, detail='Tên đăng nhập hoặc mật khẩu không đúng.')
+            return {'ok': True, 'role': 'admin', 'username': username}
+    except HTTPException:
+        raise
+    except Exception as e:
+            raise HTTPException(status_code=503, detail=f'Không kết nối được cơ sở dữ liệu: {e}')
+@app.post('/api/auth/admin-change-password')
+def admin_change_password(payload: dict = Body(...)):
+    username = str(payload.get('username', '')).strip()
+    current_password = str(payload.get('current_password', ''))
+    new_password = str(payload.get('new_password', ''))
+    import re
+    if len(new_password) < 8 or len(new_password) > 16 or not re.search(r'[A-Z]', new_password) or not re.search(r'[^A-Za-z0-9]', new_password):
+        raise HTTPException(status_code=400, detail='Mật khẩu mới phải dài 8–16 ký tự, có ít nhất một chữ in hoa và một ký tự đặc biệt.')
+    try:
+        with get_connection() as cn:
+            cur = cn.cursor()
+            _ensure_admin_table(cur)
+            cur.execute("SELECT MatKhauHash, Salt FROM dbo.TaiKhoanAdmin WHERE TenDangNhap=?", username)
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail='Không tìm thấy tài khoản Admin.')
+            pw_hash, salt = row
+            if not secrets.compare_digest(_hash_password(current_password, salt), pw_hash):
+                raise HTTPException(status_code=401, detail='Mật khẩu hiện tại không đúng.')
+            new_salt = secrets.token_hex(16)
+            new_hash = _hash_password(new_password, new_salt)
+            cur.execute("UPDATE dbo.TaiKhoanAdmin SET MatKhauHash=?, Salt=? WHERE TenDangNhap=?", new_hash, new_salt, username)
+            cn.commit()
+            return {'ok': True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f'Không kết nối được cơ sở dữ liệu: {e}')
