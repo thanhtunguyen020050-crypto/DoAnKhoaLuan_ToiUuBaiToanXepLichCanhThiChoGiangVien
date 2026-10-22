@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hệ thống xếp lịch gác thi - Đại học Công Thương</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/giaodien.css">
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js" onerror="var s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';document.head.appendChild(s)"></script>
+</head>
+<body>
+<script>if(sessionStorage.getItem("authRole")!=="admin"){location.replace("login.html");}</script>
+<div id="app"></div>
+<div id="modal"></div>
+<div id="toast" role="status"></div>
+<input type="file" id="logoFile" accept="image/*" hidden>
+<script>window.API_BASE_URL="http://127.0.0.1:8000/api";</script>
+<script src="js/api/api.js"></script>
+<script src="js/core/cauhinh.js"></script>
+<script src="js/core/dulieu.js"></script>
+<script src="js/core/tienich.js"></script>
+<script src="js/core/xeplich.js"></script>
+<script src="js/pages/giaodien.js"></script>
+<script src="js/pages/hienthi.js"></script>
+<script src="js/api/ketnoi-sql.js"></script>
+<script src="js/events/hanhdong.js"></script>
+<script src="js/events/thaydoi.js"></script>
+</body>
+</html>
