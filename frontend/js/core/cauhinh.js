@@ -4,8 +4,8 @@ const LOGO='assets/logo-huit.png';
 const SES={1:'Ca 1 (07:00)',2:'Ca 2 (09:30)',3:'Ca 3 (13:00)',4:'Ca 4 (15:30)'};
 const EXAM_SLOTS=[['1 → 2',1,2],['1 → 3',1,3],['3 → 4',3,4],['4 → 6',4,6],['5 → 6',5,6],['7 → 8',7,8],['7 → 9',7,9],['9 → 10',9,10],['10 → 12',10,12],['11 → 12',11,12]];
 const ROLES=['Quản trị viên'];
-const MODS=['Quản lý hệ thống','Quản lý giảng viên','Tiếp nhận lịch thi','Quản lý ràng buộc','Xếp lịch','Thống kê, báo cáo','Quản lý account'];
-const VIEWS=['sys','lec','exam','cons','sched','rep','accounts'];
+const MODS=['Quản lý hệ thống','Quản lý giảng viên','Tiếp nhận lịch thi','Quản lý ràng buộc','Xếp lịch','Thống kê, báo cáo','Quản lý account','Quản lý báo bận'];
+const VIEWS=['sys','lec','exam','cons','sched','rep','accounts','busy_reqs'];
 const WD=['CN','T2','T3','T4','T5','T6','T7'];
 const HARD=[
   {id:'H1',name:'Trong khoảng định mức ±1 ca',desc:'Giảng viên có định mức dương được nhận lệch tối đa 1 ca so với số ca theo tỷ lệ; định mức 0% thì không nhận ca.'},

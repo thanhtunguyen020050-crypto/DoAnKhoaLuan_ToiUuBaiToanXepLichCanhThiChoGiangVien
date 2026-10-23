@@ -38,6 +38,7 @@
           const a = await post('/auth/admin-login', {username, password});
           sessionStorage.setItem('authRole', 'admin');
           sessionStorage.setItem('authUsername', a.username || username);
+          if (a.token) sessionStorage.setItem('authToken', a.token);
           sessionStorage.removeItem('lecturerSession');
           location.replace('index.html');
           return;
@@ -45,6 +46,7 @@
           const u = await post('/user/login', {ma_gv:username, password});
           sessionStorage.setItem('authRole', 'user');
           sessionStorage.setItem('lecturerSession', JSON.stringify(u));
+          if (u.token) sessionStorage.setItem('authToken', u.token);
           sessionStorage.removeItem('authUsername');
           if (u.must_change_password) sessionStorage.setItem('mustChangePassword','1');
           else sessionStorage.removeItem('mustChangePassword');

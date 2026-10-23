@@ -16,4 +16,6 @@ const adminSession = sessionStorage.getItem('authRole') === 'admin';
 let cur=adminSession?(S.users.find(x=>String(x.user).toLowerCase()==='admin' && x.on) || S.users.find(x=>x.id===1 && x.on) || null):null,view='home',pend=null,pendL=null,pendTeach=null,pendBusy=null,pre=null,pick=null,tab6='quota';
 const F={lq:'',ld:'',eq:'',ed:'',sd:'',lack:false,xm:'lec'};
 let adminAccounts=[],accountsLoading=false,accountsError='';
+let adminBusyRequests=[],busyReqsLoading=false,busyReqsError='';
+let busyReqFilter='ALL',busyReqSearch='';
 

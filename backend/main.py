@@ -307,6 +307,21 @@ def update_exam_shift(ma_ca:str,x:CaThiIn):
             cur=cn.cursor();cur.execute('EXEC dbo.sp_SuaCaThi ?,?,?,?,?,?,?,?,?',ma_ca,x.ngay_thi,_thu_vn(x.ngay_thi),x.tu_tiet,x.den_tiet,x.hinh_thuc_thi,x.so_gv_can_cap,None,None);_drain(cur);cn.commit();return {'ok':True}
     except Exception as e: raise HTTPException(400,str(e))
 
+@app.delete('/api/ca-thi/all')
+def clear_all_exams():
+    """Xóa toàn bộ ca thi (và phân công liên quan) của tất cả đợt thi."""
+    try:
+        with get_connection() as cn:
+            cur = cn.cursor()
+            cur.execute('DELETE FROM dbo.PhanCongCoiThi')
+            cur.execute('DELETE FROM dbo.CaThi')
+            deleted = cur.rowcount
+            cur.execute('UPDATE dbo.DinhMucPhanCong SET SoCaQuyDinh=0')
+            cn.commit()
+            return {'ok': True, 'deleted': deleted}
+    except Exception as e:
+        raise HTTPException(400, f'Lỗi xóa ca thi: {e}')
+
 @app.delete('/api/ca-thi/{ma_ca}')
 def delete_exam_shift(ma_ca:str):
     try:
@@ -401,6 +416,32 @@ FROM dbo.LichBanGV WHERE MaGV=? ORDER BY NgayBan,TuTiet
                 x['UuTien']=x.get('UuTien') or BUSY_REASONS.get(x.get('LyDo'), 3)
             return {'items':rows}
     except Exception as e: raise HTTPException(500,f'Lỗi đọc lịch bận: {e}')
+
+@app.delete('/api/lich-day/all')
+def clear_all_teaching():
+    """Xóa toàn bộ lịch dạy của tất cả giảng viên."""
+    try:
+        with get_connection() as cn:
+            cur = cn.cursor()
+            cur.execute('DELETE FROM dbo.LichDayGV')
+            deleted = cur.rowcount
+            cn.commit()
+            return {'ok': True, 'deleted': deleted}
+    except Exception as e:
+        raise HTTPException(400, f'Lỗi xóa lịch dạy: {e}')
+
+@app.delete('/api/lich-ban/all')
+def clear_all_busy():
+    """Xóa toàn bộ lịch bận của tất cả giảng viên."""
+    try:
+        with get_connection() as cn:
+            cur = cn.cursor()
+            cur.execute('DELETE FROM dbo.LichBanGV')
+            deleted = cur.rowcount
+            cn.commit()
+            return {'ok': True, 'deleted': deleted}
+    except Exception as e:
+        raise HTTPException(400, f'Lỗi xóa lịch bận: {e}')
 
 @app.put('/api/lich-ban/{ma_gv}')
 def replace_busy(ma_gv:str,items:list[dict]):
@@ -501,6 +542,18 @@ except ImportError:
 
 app.include_router(user_portal_router)
 
+try:
+    from .routers.busy_requests import router as busy_requests_router
+except ImportError:
+    from routers.busy_requests import router as busy_requests_router
+
+app.include_router(busy_requests_router)
+
+try:
+    from .auth_utils import create_token
+except ImportError:
+    from auth_utils import create_token
+
 # ===== Xác thực Admin lưu trong SQL Server =====
 import hashlib, secrets
 from fastapi import Body
@@ -549,7 +602,8 @@ def admin_login(payload: dict = Body(...)):
             pw_hash, salt = row
             if not secrets.compare_digest(_hash_password(password, salt), pw_hash):
                 raise HTTPException(status_code=401, detail='Tên đăng nhập hoặc mật khẩu không đúng.')
-            return {'ok': True, 'role': 'admin', 'username': username}
+            token = create_token({'sub': username, 'username': username, 'role': 'admin'})
+            return {'ok': True, 'role': 'admin', 'username': username, 'token': token}
     except HTTPException:
         raise
     except Exception as e:

@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SQL_SERVER = os.getenv('SQL_SERVER', r'LAPTOP-V7CFUSHA\SQLEXPRESS01')
+SQL_SERVER = os.getenv('SQL_SERVER', r'LAPTOP-I45QUNGD')
 SQL_DATABASE = os.getenv('SQL_DATABASE', 'DB_XepLichCoiThi_Final')
 SQL_DRIVER = os.getenv('SQL_DRIVER', 'ODBC Driver 17 for SQL Server')
 SQL_TRUSTED = os.getenv('SQL_TRUSTED_CONNECTION', 'yes').lower() in ('1','true','yes','y')

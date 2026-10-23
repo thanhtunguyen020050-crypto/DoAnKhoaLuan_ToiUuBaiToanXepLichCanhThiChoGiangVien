@@ -1,12 +1,12 @@
 /* ========= Giao diện ========= */
-function canSee(v){if(v==='home')return true;const i=VIEWS.indexOf(v);return !!(S.perms[cur.role]&&S.perms[cur.role][i])}
+function canSee(v){if(v==='home'||v==='busy_reqs')return true;const i=VIEWS.indexOf(v);return !!(S.perms[cur.role]&&S.perms[cur.role][i])}
 function topbar(){
   const d=new Date();
   return '<header class="topbar"><div class="tb-brand">'+logoHTML(38)+'<div><div class="uni">Trường Đại học Công Thương TP.HCM</div><h1>Hệ thống xếp lịch gác thi</h1><div class="sub">Khoa Công nghệ Thông tin &middot; Chỉ dành cho quản trị viên</div></div></div>'+
     '<div class="tb-r"><span class="pillbox">'+IC.cal+'<span class="hide-sm">'+d.toLocaleDateString('vi-VN',{weekday:'long',day:'2-digit',month:'2-digit',year:'numeric'})+'</span></span>'+
-    '<button class="ibtn" data-act="admin-notifications" title="Thông báo đổi ca" aria-label="Thông báo đổi ca">'+IC.bell+'<span class="dot" id="bellDot" hidden></span></button><div class="tb-user"><div class="tb-av">'+esc(initials(cur.name))+'</div><div><b>'+esc(cur.name)+'</b><span>'+esc(cur.role)+'</span></div><button class="ibtn" data-act="change-admin-password" title="Đổi mật khẩu Admin" aria-label="Đổi mật khẩu Admin">'+IC.key+'</button><button class="ibtn" data-act="logout" title="Đăng xuất" aria-label="Đăng xuất">'+IC.logout+'</button></div></div></header>';
+    '<button class="ibtn" data-act="admin-notifications" title="Thông báo" aria-label="Thông báo">'+IC.bell+'<span class="dot" id="bellDot" hidden></span></button><div class="tb-user"><div class="tb-av">'+esc(initials(cur.name))+'</div><div><b>'+esc(cur.name)+'</b><span>'+esc(cur.role)+'</span></div><button class="ibtn" data-act="change-admin-password" title="Đổi mật khẩu Admin" aria-label="Đổi mật khẩu Admin">'+IC.key+'</button><button class="ibtn" data-act="logout" title="Đăng xuất" aria-label="Đăng xuất">'+IC.logout+'</button></div></div></header>';
 }
-const NAV_IC={home:'home',sys:'gear',lec:'users',exam:'inbox',cons:'sliders',sched:'cal',rep:'chart',accounts:'key'};
+const NAV_IC={home:'home',sys:'gear',lec:'users',exam:'inbox',cons:'sliders',sched:'cal',rep:'chart',accounts:'key',busy_reqs:'clip'};
 function sidebar(){
   const items=[['home','Tổng quan']].concat(VIEWS.map((v,i)=>[v,MODS[i]]));
   return '<aside class="side"><div class="sec">Menu chính</div><nav class="nav" aria-label="Chức năng">'+
@@ -71,6 +71,96 @@ function accountsView(){
   return head('Quản lý account','','<button class="btn" data-act="load-user-accounts">Tải lại từ CSDL</button>')+
     '<div class="panel"><h2>Tài khoản user</h2><p class="sub">Danh sách bao gồm cả tài khoản đang hoạt động và đã khóa. Admin có thể cấp mật khẩu tạm nếu user quên mật khẩu.</p><div class="tw"><table><thead><tr><th>Họ tên</th><th>Mã giảng viên</th><th>Email</th><th>Hoạt động</th><th>Mật khẩu</th><th>Trạng thái giảng viên</th><th>Đăng nhập lần cuối</th><th>Thao tác</th></tr></thead><tbody>'+body+'</tbody></table></div></div>';
 }
+function busyReqsView(){
+  const list = adminBusyRequests;
+  const pendingCount = list.filter(x=>x.TrangThai==='PENDING').length;
+  const approvedCount = list.filter(x=>x.TrangThai==='APPROVED').length;
+  const rejectedCount = list.filter(x=>x.TrangThai==='REJECTED').length;
+
+  const reqStatusMap = {
+    'PENDING': ['Chờ Admin xử lý', 'warn'],
+    'APPROVED': ['Đã chấp nhận', 'ok'],
+    'REJECTED': ['Đã từ chối', 'bad']
+  };
+
+  const rows = list.map(a => {
+    const st = reqStatusMap[a.TrangThai] || [a.TrangThai, ''];
+    const caInfo = a.MaCa ? '<b>'+esc(a.MaCa)+'</b><br><span class="hint" style="margin:0">'+fmtD(a.NgayThi)+' · Tiết '+(a.TuTiet||'')+'–'+(a.DenTiet||'')+' (P.'+esc(a.PhongThi||'—')+')</span>' : '<span class="muted">Không gắn ca cụ thể</span>';
+    const timeRange = esc(a.ThoiGianBatDauBan ? a.ThoiGianBatDauBan.replace('T',' ') : '')+'<br>→ '+esc(a.ThoiGianKetThucBan ? a.ThoiGianKetThucBan.replace('T',' ') : '');
+    
+    let resInfo = '<span class="muted">—</span>';
+    if (a.TrangThai === 'APPROVED') {
+      resInfo = '<span style="color:var(--ok);font-weight:600">Đã đổi GV</span><br><span class="hint" style="margin:0">Thay bởi: '+esc(a.TenGVThayThe || a.MaGVThayThe || 'Đã phân công lại')+'</span>';
+    } else if (a.TrangThai === 'REJECTED') {
+      resInfo = '<span style="color:var(--bad);font-weight:500">Giữ nguyên lịch</span><br><span class="hint" style="margin:0">Lý do: '+esc(a.LyDoTuChoi || 'Không nêu')+'</span>';
+    }
+
+    const actionBtn = a.TrangThai === 'PENDING'
+      ? '<button class="btn sm pri" data-act="process-busy-request" data-id="'+a.MaYeuCau+'">Xem & Xử lý</button>'
+      : '<button class="btn sm" data-act="view-busy-detail" data-id="'+a.MaYeuCau+'">Chi tiết</button>';
+
+    return '<tr>'+
+      '<td><b>#'+a.MaYeuCau+'</b></td>'+
+      '<td><b>'+esc(a.HoTen)+'</b><br><span class="hint" style="margin:0">'+esc(a.MaGV)+'</span></td>'+
+      '<td>'+caInfo+'</td>'+
+      '<td><small>'+timeRange+'</small></td>'+
+      '<td><b>'+esc(a.LyDoBaoBan)+'</b>'+(a.GhiChuGV ? '<br><span class="hint" style="margin:0">'+esc(a.GhiChuGV)+'</span>' : '')+'</td>'+
+      '<td><span class="chip '+st[1]+'">'+esc(st[0])+'</span></td>'+
+      '<td><small>'+esc(a.ThoiGianGui ? a.ThoiGianGui.replace('T',' ') : '')+'</small></td>'+
+      '<td>'+resInfo+'</td>'+
+      '<td>'+actionBtn+'</td>'+
+    '</tr>';
+  }).join('');
+
+  const body = busyReqsLoading
+    ? '<tr><td colspan="9" class="empty">Đang tải danh sách yêu cầu báo bận từ SQL Server…</td></tr>'
+    : busyReqsError
+    ? '<tr><td colspan="9" class="empty" style="color:var(--bad)">'+esc(busyReqsError)+'</td></tr>'
+    : rows || '<tr><td colspan="9" class="empty">Không có yêu cầu báo bận nào.</td></tr>';
+
+  return head('Quản lý yêu cầu báo bận',
+    'Tiếp nhận yêu cầu báo bận từ giảng viên, đối chiếu lịch và tự quyết định phương án điều chỉnh ca thi.',
+    '<button class="btn" data-act="load-busy-requests">Tải lại từ CSDL</button>') +
+    '<div class="stats">'+
+      '<div class="stat ic"><div class="si">'+IC.clip+'</div><div><b>'+list.length+'</b><span>Tổng số yêu cầu</span></div></div>'+
+      '<div class="stat ic hot"><div class="si">'+IC.warn+'</div><div><b>'+pendingCount+'</b><span>Chờ xử lý</span></div></div>'+
+      '<div class="stat ic"><div class="si">'+IC.ok+'</div><div><b>'+approvedCount+'</b><span>Đã chấp nhận</span></div></div>'+
+      '<div class="stat ic"><div class="si">'+IC.bad+'</div><div><b>'+rejectedCount+'</b><span>Đã từ chối</span></div></div>'+
+    '</div>'+
+    '<div class="panel">'+
+      '<h2>Danh sách yêu cầu báo bận</h2>'+
+      '<div class="tools">'+
+        '<div class="grow">'+
+          '<input type="text" data-inp="busy-search" placeholder="Tìm theo tên GV, mã GV hoặc mã ca thi..." value="'+esc(busyReqSearch)+'" aria-label="Tìm yêu cầu báo bận">'+
+        '</div>'+
+        '<select data-chg="busy-filter" aria-label="Lọc theo trạng thái">'+
+          '<option value="ALL" '+(busyReqFilter==='ALL'?'selected':'')+'>Tất cả trạng thái</option>'+
+          '<option value="PENDING" '+(busyReqFilter==='PENDING'?'selected':'')+'>Chờ xử lý (PENDING)</option>'+
+          '<option value="APPROVED" '+(busyReqFilter==='APPROVED'?'selected':'')+'>Đã chấp nhận (APPROVED)</option>'+
+          '<option value="REJECTED" '+(busyReqFilter==='REJECTED'?'selected':'')+'>Đã từ chối (REJECTED)</option>'+
+        '</select>'+
+      '</div>'+
+      '<div class="tw">'+
+        '<table>'+
+          '<thead>'+
+            '<tr>'+
+              '<th>Mã YC</th>'+
+              '<th>Giảng viên</th>'+
+              '<th>Ca thi liên quan</th>'+
+              '<th>Thời gian bận</th>'+
+              '<th>Lý do</th>'+
+              '<th>Trạng thái</th>'+
+              '<th>Thời gian gửi</th>'+
+              '<th>Kết quả xử lý</th>'+
+              '<th>Thao tác</th>'+
+            '</tr>'+
+          '</thead>'+
+          '<tbody>'+body+'</tbody>'+
+        '</table>'+
+      '</div>'+
+      '<p class="hint">Yêu cầu ở trạng thái <b>Chờ xử lý</b> được ưu tiên hiển thị trước. Khi chấp nhận, lịch thi chính thức sẽ được cập nhật trong transaction sau khi kiểm tra toàn bộ ràng buộc RB1-RB6.</p>'+
+    '</div>';
+}
 function lecRows(){
   const q=F.lq.trim().toLowerCase();
   const L=S.lecs.filter(l=>(!F.ld||l.dept===F.ld)&&(!q||l.name.toLowerCase().indexOf(q)>=0));
@@ -79,7 +169,7 @@ function lecRows(){
 }
 function lecView(){
   return head('Quản lý giảng viên','Danh sách giảng viên lấy trực tiếp từ SQL Server. Định mức và lịch dạy/bận được lưu trong cơ sở dữ liệu.',
-    '<button class="btn" data-act="refresh-lec">Tải lại từ CSDL</button><button class="btn" data-act="quota-all">Đặt định mức chung</button><button class="btn" data-act="pick-teach-file">'+IC.upload+'Import lịch dạy</button><button class="btn" data-act="pick-busy-file">'+IC.upload+'Import lịch bận</button><button class="btn pri" data-act="add-lec">'+IC.plus+'Thêm giảng viên</button>')+
+    '<button class="btn" data-act="refresh-lec">Tải lại từ CSDL</button><button class="btn" data-act="quota-all">Đặt định mức chung</button><button class="btn" data-act="pick-teach-file">'+IC.upload+'Import lịch dạy</button><button class="btn" data-act="pick-busy-file">'+IC.upload+'Import lịch bận</button><button class="btn danger" data-act="clear-all-teaching" title="Xóa toàn bộ lịch dạy của tất cả giảng viên">'+IC.x+' Xóa tất cả lịch dạy</button><button class="btn danger" data-act="clear-all-busy" title="Xóa toàn bộ lịch bận của tất cả giảng viên">'+IC.x+' Xóa tất cả lịch bận</button><button class="btn pri" data-act="add-lec">'+IC.plus+'Thêm giảng viên</button>')+
     '<input type="file" id="fileTeach" data-chg="teach-file" accept=".xlsx,.xls,.csv,.txt,.tsv" hidden>'+
     '<input type="file" id="fileBusy" data-chg="busy-file" accept=".xlsx,.xls,.csv,.txt,.tsv" hidden>'+
     (pendBusy?'<div class="panel"><h2>Kiểm tra import lịch bận</h2><p class="sub">'+esc(pendBusy.name)+' · '+pendBusy.rows.length+' dòng hợp lệ · '+pendBusy.errors.length+' dòng lỗi</p><p class="hint"><b>Họ tên</b> được đối chiếu không phân biệt hoa/thường, dấu và khoảng trắng thừa. <b>Ngày</b> 22/1/2026 và 22/01/2026 được chuẩn hóa thành cùng ngày. “Cả ngày” sẽ tạo cả Sáng và Chiều. Nếu cùng GV/ngày/buổi có nhiều lý do, hệ thống giữ lý do có mức ưu tiên cao nhất.</p>'+importSummary(pendBusy,'lịch bận')+'<div class="tools"><button class="btn pri" data-act="apply-busy"'+(pendBusy.rows.length&&!pendBusy.errors.length?'':' disabled')+'>Nhập lịch bận</button><button class="btn" data-act="cancel-busy">Hủy</button></div></div>':'')+
@@ -118,7 +208,8 @@ function examView(){
       '<div class="tools" style="margin-top:12px"><button class="btn pri" data-act="do-import-exam"'+(pend.rows.length?'':' disabled')+'>'+(S.exams.length?'Thay lịch ca thi hiện tại bằng '+pend.rows.length+' dòng':'Nhập '+pend.rows.length+' ca thi')+'</button><button class="btn" data-act="cancel-import-exam">Hủy</button></div></div>';
   }
   const dates=[...new Set(S.exams.map(e=>e.date))].sort();
-  return head('Quản lý lịch thi','Nhập ngày thi thực tế → Tiết/ca → Loại ca → Số giảng viên cần. Dữ liệu được lưu trực tiếp vào SQL Server.','<button class="btn pri" data-act="add-exam">'+IC.plus+'Nhập ca thi</button>')+
+  return head('Quản lý lịch thi','Nhập ngày thi thực tế → Tiết/ca → Loại ca → Số giảng viên cần. Dữ liệu được lưu trực tiếp vào SQL Server.',
+    '<button class="btn danger" data-act="clear-all-exams" title="Xóa toàn bộ ca thi">'+IC.x+' Xóa tất cả ca thi</button><button class="btn pri" data-act="add-exam">'+IC.plus+'Nhập ca thi</button>')+
     '<div class="panel"><h2>Import ca thi của bạn</h2><p class="sub">Excel hoặc CSV gồm 4 cột theo thứ tự: Ngày thi, Ca/tiết, Số giảng viên cần, Loại ca (Lý thuyết/Tự luận). Có thể đặt hàng tiêu đề. Ví dụ ca/tiết: 1 → 2.</p><div class="drop"><p>Chọn file Excel hoặc CSV của bạn</p><div class="tools" style="justify-content:center;margin:0"><button class="btn pri" data-act="pick-exam-file">'+IC.upload+'Import ca thi</button></div></div><input type="file" id="fileExam" data-chg="file-exam" accept=".xlsx,.xls,.csv,.txt,.tsv" hidden></div>'+pv+
     '<div class="panel"><h2>Danh sách ca thi</h2><div class="tools"><div class="grow"><input type="text" data-inp="eq" placeholder="Tìm theo ngày hoặc ca/tiết" value="'+esc(F.eq)+'" aria-label="Tìm ca thi"></div><select data-chg="ed" aria-label="Lọc theo ngày"><option value="">Tất cả ngày</option>'+dates.map(d=>'<option value="'+d+'"'+(F.ed===d?' selected':'')+'>'+wd(d)+' '+fmtD(d)+'</option>').join('')+'</select></div><div class="tw"><table><thead><tr><th>Ngày</th><th>Ca/tiết</th><th>Buổi</th><th>Loại ca</th><th class="c">Cần cấp</th><th>Đã xếp</th></tr></thead><tbody id="examRows">'+examRows()+'</tbody></table></div></div>';
 }
