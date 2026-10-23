@@ -542,6 +542,18 @@ except ImportError:
 
 app.include_router(user_portal_router)
 
+try:
+    from .routers.busy_requests import router as busy_requests_router
+except ImportError:
+    from routers.busy_requests import router as busy_requests_router
+
+app.include_router(busy_requests_router)
+
+try:
+    from .auth_utils import create_token
+except ImportError:
+    from auth_utils import create_token
+
 # ===== Xác thực Admin lưu trong SQL Server =====
 import hashlib, secrets
 from fastapi import Body
@@ -590,7 +602,8 @@ def admin_login(payload: dict = Body(...)):
             pw_hash, salt = row
             if not secrets.compare_digest(_hash_password(password, salt), pw_hash):
                 raise HTTPException(status_code=401, detail='Tên đăng nhập hoặc mật khẩu không đúng.')
-            return {'ok': True, 'role': 'admin', 'username': username}
+            token = create_token({'sub': username, 'username': username, 'role': 'admin'})
+            return {'ok': True, 'role': 'admin', 'username': username, 'token': token}
     except HTTPException:
         raise
     except Exception as e:

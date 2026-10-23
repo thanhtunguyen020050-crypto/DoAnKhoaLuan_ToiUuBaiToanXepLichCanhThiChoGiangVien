@@ -4,7 +4,7 @@ function render(){
   const app=$('#app');
   if(!cur){app.innerHTML=loginView();return}
   if(!canSee(view))view='home';
-  const pages={home:homeView,sys:sysView,lec:lecView,exam:examView,cons:consView,sched:schedView,rep:repView,accounts:accountsView};
+  const pages={home:homeView,sys:sysView,lec:lecView,exam:examView,cons:consView,sched:schedView,rep:repView,accounts:accountsView,busy_reqs:busyReqsView};
   app.innerHTML=topbar()+'<div class="shell">'+sidebar()+'<main class="main">'+pages[view]()+'</main></div>';
   const lc=$('#lcount');if(lc)lc.textContent=S.lecs.length+' giảng viên';refreshAdminBell();
 }

@@ -2,11 +2,14 @@
 window.API = (() => {
   const base = window.API_BASE_URL || 'http://127.0.0.1:8000/api';
   async function req(path, opts={}) {
-    const r = await fetch(base + path, {headers:{'Content-Type':'application/json'}, ...opts});
+    const token = sessionStorage.getItem('authToken');
+    const headers = {'Content-Type':'application/json', ...(opts.headers || {})};
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    const r = await fetch(base + path, {...opts, headers});
     const data = await r.json().catch(()=>({}));
     if (!r.ok){
       const d=data.detail;
-      const msg=typeof d==='string'?d:(d?.message||((d?.errors||[]).map(x=>`Dòng ${x.line}: ${x.name||''} ${x.msg||''}`).join('\n'))||('API lỗi '+r.status));
+      const msg=typeof d==='string'?d:(d?.message||((d?.errors||d?.violations||[]).map(x=>typeof x==='string'?x:`Dòng ${x.line}: ${x.name||''} ${x.msg||''}`).join('\n'))||('API lỗi '+r.status));
       const err=new Error(msg); err.detail=d; throw err;
     }
     return data;
@@ -14,6 +17,30 @@ window.API = (() => {
   return {
     async health(){return req('/kiem-tra-ket-noi')},
     async adminNotifications(){return req('/user/admin/notifications')},
+    async adminBusyRequests(trangThai=null, q=null){
+      const p = new URLSearchParams();
+      if(trangThai && trangThai!=='ALL') p.set('trang_thai', trangThai);
+      if(q) p.set('q', q);
+      const qs = p.toString();
+      return req('/admin/busy-requests' + (qs ? '?' + qs : ''));
+    },
+    async adminBusyRequestDetail(id){return req('/admin/busy-requests/' + encodeURIComponent(id))},
+    async adminBusyRequestCandidates(id){return req('/admin/busy-requests/' + encodeURIComponent(id) + '/candidates')},
+    async adminApproveBusyRequest(id, maGVThayThe, ghiChuAdmin=null){
+      return req('/admin/busy-requests/' + encodeURIComponent(id) + '/approve', {
+        method: 'POST',
+        body: JSON.stringify({ma_gv_thay_the: maGVThayThe, ghi_chu_admin: ghiChuAdmin})
+      });
+    },
+    async adminRejectBusyRequest(id, lyDoTuChoi, ghiChuAdmin=null){
+      return req('/admin/busy-requests/' + encodeURIComponent(id) + '/reject', {
+        method: 'POST',
+        body: JSON.stringify({ly_do_tu_choi: lyDoTuChoi, ghi_chu_admin: ghiChuAdmin})
+      });
+    },
+    async userBusyRequests(){return req('/user/busy-requests')},
+    async userCreateBusyRequest(payload){return req('/user/busy-requests', {method:'POST', body:JSON.stringify(payload)})},
+    async userBusyRequestDetail(id){return req('/user/busy-requests/' + encodeURIComponent(id))},
     async userAccounts(){
       try{return await req('/user/admin/accounts')}
       catch(e){

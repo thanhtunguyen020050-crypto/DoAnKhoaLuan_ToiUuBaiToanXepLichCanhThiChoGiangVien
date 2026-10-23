@@ -11,7 +11,7 @@ const A={
     try{
       const r=await API.adminNotifications();
       const items=r.items||[];localStorage.setItem('huit-admin-seen',String(Math.max(0,...items.map(x=>x.ID))));refreshAdminBell(true);
-      openModal({title:'Thông báo đổi ca',wide:true,body:items.length?'<div class="pcl">'+items.map(x=>'<div class="pc"><div class="t"><b>'+esc(x.TieuDe)+'</b><span>'+esc(x.NoiDung)+'</span><span class="hint">'+esc(x.TaoLuc||'')+'</span></div></div>').join('')+'</div>':'<p class="muted">Chưa có thông báo đổi ca.</p>',foot:'<button class="btn pri" data-act="close">Đóng</button>'});
+      openModal({title:'Thông báo hệ thống',wide:true,body:items.length?'<div class="pcl">'+items.map(x=>'<div class="pc"><div class="t"><b>'+esc(x.TieuDe)+'</b><span>'+esc(x.NoiDung)+'</span><span class="hint">'+esc(x.TaoLuc||'')+'</span></div></div>').join('')+'</div>':'<p class="muted">Chưa có thông báo.</p>',foot:'<button class="btn pri" data-act="close">Đóng</button>'});
     }catch(e){toast('Không tải được thông báo: '+e.message)}
   },
   'change-admin-password'(){
@@ -29,8 +29,8 @@ const A={
       closeModal();toast('Đã đổi mật khẩu Admin thành công.');
     }catch(e){er.textContent=e.message||'Không kết nối được backend.'}
   },
-  logout(){cur=null;sessionStorage.removeItem('authRole');sessionStorage.removeItem('authUsername');sessionStorage.removeItem('lecturerSession');sessionStorage.removeItem('mustChangePassword');location.replace('login.html')},
-  go(t){view=t.dataset.v;render();window.scrollTo(0,0);if(view==='accounts')A['load-user-accounts']()},
+  logout(){cur=null;sessionStorage.removeItem('authRole');sessionStorage.removeItem('authUsername');sessionStorage.removeItem('authToken');sessionStorage.removeItem('lecturerSession');sessionStorage.removeItem('mustChangePassword');location.replace('login.html')},
+  go(t){view=t.dataset.v;render();window.scrollTo(0,0);if(view==='accounts')A['load-user-accounts']();if(view==='busy_reqs')A['load-busy-requests']();},
   async 'load-user-accounts'(){accountsLoading=true;accountsError='';render();try{const r=await API.userAccounts();adminAccounts=r.items||[]}catch(e){accountsError=e.message==='Not Found'?'Backend chưa nhận API quản lý account. Hãy khởi động lại backend rồi bấm “Tải lại từ CSDL”.':(e.message||'Không tải được danh sách tài khoản.')}finally{accountsLoading=false;render()}},
   'reset-user-password'(t){
     const maGV=t.dataset.id, account=adminAccounts.find(a=>String(a.MaGV)===String(maGV));
@@ -50,6 +50,281 @@ const A={
   },
   close(){closeModal()},
   ovclose(t,e){if(e.target===t)closeModal()},
+  async 'load-busy-requests'(){
+    busyReqsLoading=true;busyReqsError='';render();
+    try{
+      const r=await API.adminBusyRequests(busyReqFilter, busyReqSearch);
+      adminBusyRequests=r.items||[];
+    }catch(e){
+      busyReqsError=e.message||'Không tải được danh sách yêu cầu báo bận.';
+    }finally{
+      busyReqsLoading=false;render();
+    }
+  },
+  async 'process-busy-request'(t){
+    const id=t.dataset.id;
+    openModal({title:`Đang tải yêu cầu #${id}…`,body:'<p class="muted">Đang lấy dữ liệu chi tiết và phân tích ràng buộc giảng viên thay thế…</p>',foot:'<button class="btn" data-act="close">Đóng</button>'});
+    try{
+      const [detail, candResp]=await Promise.all([
+        API.adminBusyRequestDetail(id),
+        API.adminBusyRequestCandidates(id)
+      ]);
+      const cands=candResp.candidates||[];
+      window.__CURRENT_BUSY_DETAIL = detail;
+      window.__CURRENT_BUSY_CANDIDATES = cands;
+
+      const candRowsHtml = cands.map(c => {
+        const quotaInfo = `Đã có ${c.DaCo}/${c.DinhMuc} ca`;
+        const badge = c.HopLe
+          ? '<span class="chip ok">Đủ điều kiện (0 vi phạm)</span>'
+          : '<span class="chip bad">Không phù hợp</span>';
+        const errList = c.ViPham.map(v => `<small style="color:var(--bad);display:block;margin-top:2px">• ${esc(v)}</small>`).join('');
+
+        return `<label class="u-opt" data-q="${esc((c.HoTen+' '+c.MaGV+' '+c.TenBoMon).toLowerCase())}" style="display:flex;align-items:flex-start;gap:10px;padding:8px 10px;margin-bottom:6px;border:1px solid var(--line);border-radius:6px;background:${c.HopLe?'var(--panel)':'#fff8f8'}">
+          <input type="radio" name="candRadio" value="${esc(c.MaGV)}" data-name="${esc(c.HoTen)}" data-valid="${c.HopLe?'1':'0'}" style="margin-top:4px">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <b>${esc(c.HoTen)} (${esc(c.MaGV)})</b>
+              ${badge}
+            </div>
+            <div class="muted" style="font-size:12.5px">${esc(c.TenBoMon)} · ${quotaInfo}</div>
+            ${errList}
+          </div>
+        </label>`;
+      }).join('') || '<p class="muted">Không có giảng viên thay thế khả dụng.</p>';
+
+      openModal({
+        title: `Xử lý yêu cầu báo bận #${detail.MaYeuCau} - ${esc(detail.HoTen)}`,
+        wide: true,
+        body: `
+          <div style="display:grid;grid-template-columns:1.2fr 1.8fr;gap:16px">
+            <div>
+              <div class="panel" style="margin-bottom:12px;background:var(--sub)">
+                <h4 style="margin-top:0">1. Thông tin báo bận</h4>
+                <div><b>Giảng viên:</b> ${esc(detail.HoTen)} (${esc(detail.MaGV)})</div>
+                <div><b>Đơn vị:</b> ${esc(detail.TenBoMon)}, ${esc(detail.TenKhoa)}</div>
+                <div style="margin-top:6px"><b>Ca thi liên quan:</b> <span class="chip warn">${esc(detail.MaCa||'Chưa gán ca')}</span></div>
+                ${detail.NgayThi ? `<div><b>Thời gian ca:</b> ${fmtD(detail.NgayThi)} · Tiết ${detail.TuTiet}–${detail.DenTiet} (Phòng: ${esc(detail.PhongThi||'—')})</div>` : ''}
+                <div style="margin-top:6px"><b>Khoảng thời gian bận:</b><br><small>${esc(detail.ThoiGianBatDauBan ? detail.ThoiGianBatDauBan.replace('T',' ') : '')} → ${esc(detail.ThoiGianKetThucBan ? detail.ThoiGianKetThucBan.replace('T',' ') : '')}</small></div>
+                <div style="margin-top:6px"><b>Lý do báo bận:</b><br><b style="color:var(--bad)">${esc(detail.LyDoBaoBan)}</b></div>
+                ${detail.GhiChuGV ? `<div style="margin-top:6px"><b>Ghi chú:</b> <i>${esc(detail.GhiChuGV)}</i></div>` : ''}
+                <div style="margin-top:6px"><small class="muted">Gửi lúc: ${esc(detail.ThoiGianGui?detail.ThoiGianGui.replace('T',' '):'')}</small></div>
+              </div>
+
+              <div class="panel" style="background:var(--sub)">
+                <h4 style="margin-top:0">2. Lịch hiện tại của GV</h4>
+                <div style="font-size:12.5px;max-height:160px;overflow-y:auto">
+                  <b>Ca coi thi đã phân công (${(detail.current_schedule||[]).length}):</b>
+                  ${(detail.current_schedule||[]).map(s => `<div style="padding:2px 0;border-bottom:1px solid var(--line)">• ${fmtD(s.NgayThi)} (T${s.TuTiet}-${s.DenTiet}) - ${esc(s.MaCa)}${s.MaCa===detail.MaCa?' <span class="chip bad">Báo bận</span>':''}</div>`).join('') || '<div class="muted">Không có ca thi khác</div>'}
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h4 style="margin-top:0">3. Chọn phương án phân công giảng viên thay thế</h4>
+              <p class="sub" style="margin-bottom:8px">Hệ thống đã tự động kiểm tra RB1-RB6 đối với từng giảng viên cho ca <b>${esc(detail.MaCa)}</b>. Ưu tiên chọn giảng viên đủ điều kiện (màu xanh).</p>
+              
+              <input type="search" id="candQuickSearch" placeholder="Tìm theo tên hoặc mã giảng viên thay thế..." style="width:100%;margin-bottom:8px">
+
+              <div id="candContainer" style="max-height:260px;overflow-y:auto;padding-right:4px">
+                ${candRowsHtml}
+              </div>
+
+              <label class="f" style="margin-top:10px">
+                <span>Ghi chú xử lý của Quản trị viên <small>(không bắt buộc)</small></span>
+                <input type="text" id="adminApproveNote" placeholder="Ví dụ: Đã kiểm tra và phân công thay thế theo quy định">
+              </label>
+
+              <div class="err" id="busyProcessErr" role="alert" style="margin-top:6px"></div>
+            </div>
+          </div>
+        `,
+        foot: `
+          <button class="btn danger" data-act="open-reject-busy-modal" data-id="${detail.MaYeuCau}">${IC.x} Từ chối yêu cầu</button>
+          <button class="btn" data-act="close">Đóng</button>
+          <button class="btn pri" data-act="do-approve-busy" data-id="${detail.MaYeuCau}">${IC.ok} Chấp nhận & Cập nhật lịch</button>
+        `
+      });
+
+      const searchBox = $('#candQuickSearch');
+      if (searchBox) {
+        searchBox.oninput = e => {
+          const q = e.target.value.trim().toLowerCase();
+          document.querySelectorAll('#candContainer [data-q]').forEach(el => {
+            el.hidden = q && !el.dataset.q.includes(q);
+          });
+        };
+      }
+    }catch(err){
+      toast(err.message);
+      closeModal();
+    }
+  },
+  async 'do-approve-busy'(t){
+    const id = t.dataset.id;
+    const selected = document.querySelector('input[name="candRadio"]:checked');
+    const errEl = $('#busyProcessErr');
+    if (!selected) {
+      if (errEl) errEl.textContent = 'Vui lòng chọn một giảng viên thay thế trước khi duyệt.';
+      return;
+    }
+    const isValid = selected.dataset.valid === '1';
+    const gvName = selected.dataset.name;
+    const maGV = selected.value;
+    const note = $('#adminApproveNote') ? $('#adminApproveNote').value.trim() : '';
+
+    if (!isValid) {
+      if (!confirm(`CẢNH BÁO: Giảng viên ${gvName} (${maGV}) đang có ràng buộc vi phạm đã được liệt kê. Hệ thống sẽ kiểm tra nghiêm ngặt khi lưu. Bạn có chắc chắn muốn thử áp dụng phương án này không?`)) {
+        return;
+      }
+    } else {
+      if (!confirm(`Xác nhận phân công giảng viên ${gvName} (${maGV}) coi thay ca thi và cập nhật lịch chính thức trong SQL Server?`)) {
+        return;
+      }
+    }
+
+    t.disabled = true;
+    t.textContent = 'Đang cập nhật lịch…';
+    try {
+      const res = await API.adminApproveBusyRequest(id, maGV, note || null);
+      closeModal();
+      toast(res.message || 'Duyệt yêu cầu và cập nhật lịch thành công!');
+      A['load-busy-requests']();
+      bootSQL();
+    } catch (err) {
+      t.disabled = false;
+      t.textContent = 'Chấp nhận & Cập nhật lịch';
+      if (errEl) errEl.textContent = err.message;
+      else toast(err.message);
+    }
+  },
+  'open-reject-busy-modal'(t){
+    const id = t.dataset.id;
+    const detail = window.__CURRENT_BUSY_DETAIL || {MaYeuCau: id};
+    openModal({
+      title: `Từ chối yêu cầu báo bận #${id}`,
+      body: `
+        <p class="muted">Nhập lý do từ chối yêu cầu của giảng viên <b>${esc(detail.HoTen||'')}</b> (${esc(detail.MaGV||'')}).</p>
+        <p class="hint">Lịch coi thi chính thức hiện tại sẽ được <b>giữ nguyên 100%</b>. Giảng viên sẽ nhận được thông báo kèm lý do từ chối.</p>
+        <label class="f">
+          <span>Lý do từ chối <b style="color:var(--bad)">*</b></span>
+          <textarea id="adminRejectReason" rows="3" required placeholder="Ví dụ: Đợt thi đã sát ngày và không còn giảng viên thay thế phù hợp..."></textarea>
+        </label>
+        <label class="f" style="margin-top:8px">
+          <span>Ghi chú thêm của Admin</span>
+          <input type="text" id="adminRejectNote" placeholder="Ghi chú nội bộ...">
+        </label>
+        <div class="err" id="rejectBusyErr" role="alert"></div>
+      `,
+      foot: `
+        <button class="btn" data-act="process-busy-request" data-id="${id}">Quay lại</button>
+        <button class="btn danger" data-act="do-reject-busy" data-id="${id}">Xác nhận từ chối</button>
+      `
+    });
+  },
+  async 'do-reject-busy'(t){
+    const id = t.dataset.id;
+    const reason = $('#adminRejectReason') ? $('#adminRejectReason').value.trim() : '';
+    const note = $('#adminRejectNote') ? $('#adminRejectNote').value.trim() : '';
+    const errEl = $('#rejectBusyErr');
+
+    if (!reason) {
+      if (errEl) errEl.textContent = 'Vui lòng nhập lý do từ chối yêu cầu báo bận.';
+      return;
+    }
+
+    t.disabled = true;
+    t.textContent = 'Đang xử lý…';
+    try {
+      const res = await API.adminRejectBusyRequest(id, reason, note || null);
+      closeModal();
+      toast(res.message || 'Đã từ chối yêu cầu báo bận. Lịch được giữ nguyên.');
+      A['load-busy-requests']();
+    } catch (err) {
+      t.disabled = false;
+      t.textContent = 'Xác nhận từ chối';
+      if (errEl) errEl.textContent = err.message;
+      else toast(err.message);
+    }
+  },
+  async 'view-busy-detail'(t){
+    const id = t.dataset.id;
+    try {
+      const d = await API.adminBusyRequestDetail(id);
+      const reqStatusMap = {'PENDING': ['Chờ Admin xử lý', 'warn'], 'APPROVED': ['Đã chấp nhận', 'ok'], 'REJECTED': ['Đã từ chối', 'bad']};
+      const st = reqStatusMap[d.TrangThai] || [d.TrangThai, ''];
+      
+      let historyHtml = '';
+      if (d.history && d.history.length) {
+        historyHtml = `<div class="panel" style="margin-top:12px;background:var(--sub)">
+          <b>Lịch sử điều chỉnh phân công coi thi</b>
+          ${d.history.map(h => `<div style="font-size:13px;margin-top:6px;padding:6px 0;border-bottom:1px dashed var(--line)">
+            <div><b>Hành động:</b> ${esc(h.HanhDong)} · ${esc(h.ThoiDiem)}</div>
+            <div><b>Trước thay đổi:</b> ${esc(h.PhanCongTruoc)}</div>
+            <div><b>Sau thay đổi:</b> <span style="color:var(--ok);font-weight:600">${esc(h.PhanCongSau)}</span></div>
+            <div><b>Người thực hiện:</b> ${esc(h.NguoiThucHien)}</div>
+            ${h.LyDo ? `<div><b>Ghi chú:</b> <i>${esc(h.LyDo)}</i></div>` : ''}
+          </div>`).join('')}
+        </div>`;
+      }
+
+      openModal({
+        title: `Chi tiết yêu cầu báo bận #${d.MaYeuCau}`,
+        wide: true,
+        body: `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div>
+              <small class="muted">Giảng viên báo bận:</small><br>
+              <b>${esc(d.HoTen)}</b> (${esc(d.MaGV)})<br>
+              <small class="muted">${esc(d.TenBoMon)} · ${esc(d.TenKhoa)}</small>
+            </div>
+            <div>
+              <small class="muted">Trạng thái:</small><br>
+              <span class="chip ${st[1]}">${esc(st[0])}</span><br>
+              <small class="muted">Gửi lúc: ${esc(d.ThoiGianGui?d.ThoiGianGui.replace('T',' '):'')}</small>
+            </div>
+          </div>
+
+          <div style="margin-top:12px">
+            <small class="muted">Ca thi liên quan:</small><br>
+            ${d.MaCa ? `<b>${esc(d.MaCa)}</b> (${fmtD(d.NgayThi)}, Tiết ${d.TuTiet}–${d.DenTiet}, Phòng ${esc(d.PhongThi||'—')})` : '<i>Không gắn ca cụ thể</i>'}
+          </div>
+
+          <div style="margin-top:12px">
+            <small class="muted">Khoảng thời gian bận:</small><br>
+            <b>${esc(d.ThoiGianBatDauBan ? d.ThoiGianBatDauBan.replace('T',' ') : '')}</b> đến <b>${esc(d.ThoiGianKetThucBan ? d.ThoiGianKetThucBan.replace('T',' ') : '')}</b>
+          </div>
+
+          <div style="margin-top:12px">
+            <small class="muted">Lý do báo bận:</small><br>
+            <b>${esc(d.LyDoBaoBan)}</b>
+          </div>
+
+          ${d.GhiChuGV ? `<div style="margin-top:12px"><small class="muted">Ghi chú của GV:</small><br>${esc(d.GhiChuGV)}</div>` : ''}
+
+          <div style="margin-top:16px;padding:12px;border-radius:8px;background:var(--sub)">
+            <b>Kết quả xử lý:</b><br>
+            ${d.TrangThai === 'APPROVED' ? `<div style="color:var(--ok);margin-top:6px">
+              <b>ĐÃ DUYỆT & CẬP NHẬT LỊCH:</b><br>
+              Người duyệt: <b>${esc(d.NguoiXuLy||'Admin')}</b> lúc ${esc(d.ThoiGianXuLy?d.ThoiGianXuLy.replace('T',' '):'')}<br>
+              ${d.GhiChuAdmin ? `Ghi chú Admin: <i>${esc(d.GhiChuAdmin)}</i>` : ''}
+            </div>` : ''}
+            ${d.TrangThai === 'REJECTED' ? `<div style="color:var(--bad);margin-top:6px">
+              <b>ĐÃ TỪ CHỐI (LỊCH GIỮ NGUYÊN):</b><br>
+              Lý do từ chối: <b style="color:var(--bad)">${esc(d.LyDoTuChoi||'Không nêu')}</b><br>
+              Người xử lý: <b>${esc(d.NguoiXuLy||'Admin')}</b> lúc ${esc(d.ThoiGianXuLy?d.ThoiGianXuLy.replace('T',' '):'')}<br>
+              ${d.GhiChuAdmin ? `Ghi chú Admin: <i>${esc(d.GhiChuAdmin)}</i>` : ''}
+            </div>` : ''}
+          </div>
+
+          ${historyHtml}
+        `,
+        foot: '<button class="btn pri" data-act="close">Đóng</button>'
+      });
+    } catch(err) {
+      toast(err.message);
+    }
+  },
   logo(){$('#logoFile').click()},
   'add-user'(){openModal({title:'Thêm tài khoản',body:'<label class="f"><span>Họ tên</span><input type="text" id="un"></label><label class="f"><span>Tên đăng nhập</span><input type="text" id="uu"></label><label class="f"><span>Vai trò</span><select id="ur">'+ROLES.map(r=>'<option>'+r+'</option>').join('')+'</select></label><div class="err" id="ferr"></div>',foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="save-user">Tạo tài khoản</button>'})},
   'save-user'(){

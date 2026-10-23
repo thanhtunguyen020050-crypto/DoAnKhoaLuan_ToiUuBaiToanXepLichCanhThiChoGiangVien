@@ -10,8 +10,10 @@ from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel, Field
 try:
     from .ketnoi_sql import get_connection  # type: ignore
+    from .auth_utils import create_token
 except ImportError:
     from ketnoi_sql import get_connection
+    from auth_utils import create_token
 
 router = APIRouter(prefix="/api/user", tags=["User UI"])
 ITERATIONS = 310_000
@@ -90,8 +92,10 @@ def login(x: LoginIn):
                 raise HTTPException(401, "Mã giảng viên hoặc mật khẩu không đúng.")
             cur.execute("UPDATE dbo.TaiKhoanGiangVien SET LastLoginAt=SYSDATETIME() WHERE MaGV=?", x.ma_gv.strip())
             cn.commit()
+            token = create_token({"sub": r[0], "ma_gv": r[0], "role": "user", "ho_ten": r[1]})
             return {"ok": True, "ma_gv": r[0], "ho_ten": r[1], "email": r[2],
-                    "must_change_password": bool(r[4]) or r[3] is None}
+                    "must_change_password": bool(r[4]) or r[3] is None,
+                    "token": token}
     except HTTPException:
         raise
     except Exception as e:
