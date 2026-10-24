@@ -3,9 +3,21 @@
 Bản này dùng đúng SQL người dùng cung cấp: `DB_XepLichCoiThi_TheoKhoa_RangBuoc(3).sql`, với tên database thực tế là `DB_XepLichCoiThi_Final`.
 
 ## Cấu trúc
-- `frontend/`: giao diện HTML/CSS/JS, đã tách thành các module.
+- `frontend/`: React + Vite làm khung giao diện; CSS và các màn hình hiện có được giữ tương thích trong giai đoạn chuyển đổi.
 - `backend/`: FastAPI + pyodbc, kết nối SQL Server.
 - `database/`: script SQL dựng database.
+
+## Chạy giao diện
+Mở terminal tại thư mục `frontend` và chạy:
+
+```powershell
+npm install
+npm run dev
+```
+
+Mở địa chỉ Vite in ra, mặc định `http://127.0.0.1:5173`. Chạy FastAPI riêng theo hướng dẫn trong `backend/README_BACKEND.md`; địa chỉ API mặc định là `http://127.0.0.1:8000/api`. Nếu backend ở địa chỉ khác, tạo `frontend/.env.local` với `VITE_API_BASE_URL=http://<host>:<port>/api`.
+
+Các trang quản trị, đăng nhập và giảng viên đều vào qua React/Vite. Màn hình đăng nhập đã viết bằng React; những luồng quản trị và giảng viên hiện được nạp qua lớp tương thích để giữ nguyên tính năng trong lúc chuyển từng màn hình sang component React.
 
 ## Không dùng file SQL để kết nối
 File SQL chỉ dùng để tạo database. Ứng dụng kết nối bằng backend + chuỗi kết nối.

@@ -10,12 +10,13 @@ const cmpEx=(a,b)=>a.date.localeCompare(b.date)||rangeFor(a)[0]-rangeFor(b)[0]||
 const depts=()=>[...new Set(S.lecs.map(l=>l.dept).concat(S.exams.map(e=>e.dept)).filter(Boolean))].sort();
 function toast(m){const t=$('#toast');t.textContent=m;t.style.display='block';clearTimeout(toast.h);toast.h=setTimeout(()=>t.style.display='none',3200)}
 function openModal(o){
-  $('#modal').innerHTML='<div class="ov" data-act="ovclose"><div class="md '+(o.wide?'wide':'')+'" role="dialog" aria-modal="true" aria-label="'+esc(o.title)+'"><header><h3>'+esc(o.title)+'</h3><button class="x" data-act="close" aria-label="Đóng">'+IC.x+'</button></header><div class="bd">'+o.body+'</div>'+(o.foot?'<footer>'+o.foot+'</footer>':'')+'</div></div>';
+  $('#modal').innerHTML='<div class="ov" data-act="ovclose"><div class="md '+(o.wide?'wide ':'')+(o.className?esc(o.className):'')+'" role="dialog" aria-modal="true" aria-label="'+esc(o.title)+'"><header><h3>'+esc(o.title)+'</h3><button class="x" data-act="close" aria-label="Đóng">'+IC.x+'</button></header><div class="bd">'+o.body+'</div>'+(o.foot?'<footer>'+o.foot+'</footer>':'')+'</div></div>';
   const f=$('#modal input[type=text],#modal input[type=number]');if(f)f.focus();
 }
 const closeModal=()=>{$('#modal').innerHTML='';pick=null};
 function logoHTML(px){
-  const inner=S.logo?'<img src="'+S.logo+'" alt="Logo Trường Đại học Công Thương" style="width:'+px+'px;height:'+px+'px">':'<div class="logo-ph" style="width:'+px+'px;height:'+px+'px;font-size:'+Math.round(px/4)+'px">HUIT</div>';
+  const logo=S.logo&&S.logo!=='assets/logo-huit.png'?S.logo:LOGO;
+  const inner=logo?'<img src="'+logo+'" alt="Logo Trường Đại học Công Thương" style="width:'+px+'px;height:'+px+'px">':'<div class="logo-ph" style="width:'+px+'px;height:'+px+'px;font-size:'+Math.round(px/4)+'px">HUIT</div>';
   return '<button class="logo-btn" data-act="logo" title="Bấm để thay bằng logo của trường" aria-label="Thay logo trường"><div class="logo-wrap">'+inner+'</div></button>';
 }
 // Chuyển đổi Excel date serial (số nguyên như 46034) thành chuỗi 'yyyy-mm-dd'.

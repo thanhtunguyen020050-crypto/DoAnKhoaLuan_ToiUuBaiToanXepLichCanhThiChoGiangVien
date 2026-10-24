@@ -4,7 +4,7 @@ const C={
   active(t){S.users.find(x=>x.id===+t.dataset.id).on=t.checked;save()},
   'busy-filter'(t){busyReqFilter=t.value;A['load-busy-requests']();},
   perm(t){S.perms[ROLES[+t.dataset.r]][+t.dataset.i]=t.checked?1:0;render()},
-  async pct(t){const l=lec(t.dataset.id),v=parseInt(t.value,10);if(!l)return;const q=isNaN(v)||v<0?0:Math.min(v,100);l.pct=q;try{if(window.__MA_DOT)await API.updateLecturer(l.id,{ho_ten:l.name,don_vi:l.dept,ty_le:q,ma_dot:window.__MA_DOT});render();toast('Đã cập nhật định mức trên SQL Server.')}catch(e){toast(e.message);render()}},
+  async pct(t){const l=lec(t.dataset.id),v=parseInt(t.value,10);if(!l)return;const q=isNaN(v)||v<0?0:Math.min(v,100);l.pct=q;S.lecs.forEach(x=>x.quota_authoritative=false);try{if(window.__MA_DOT)await API.updateLecturer(l.id,{ho_ten:l.name,don_vi:l.dept,ty_le:q,ma_dot:window.__MA_DOT});render();toast('Đã cập nhật định mức trên SQL Server.')}catch(e){toast(e.message);render()}},
   ld(t){F.ld=t.value;render()},ed(t){F.ed=t.value;render()},sd(t){F.sd=t.value;render()},lack(t){F.lack=t.checked;render()},
   s2n(t){S.soft.S2.n=+t.value;save()},
   'soft-on'(t){S.soft[t.dataset.id].on=t.checked;render()},

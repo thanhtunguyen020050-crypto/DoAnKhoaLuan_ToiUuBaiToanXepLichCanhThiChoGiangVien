@@ -1,13 +1,15 @@
-import os
 import pyodbc
-from dotenv import load_dotenv
 
-load_dotenv()
+try:
+    from .core.config import settings
+except ImportError:
+    from core.config import settings
 
-SQL_SERVER = os.getenv('SQL_SERVER', r'LAPTOP-I45QUNGD')
-SQL_DATABASE = os.getenv('SQL_DATABASE', 'DB_XepLichCoiThi_Final')
-SQL_DRIVER = os.getenv('SQL_DRIVER', 'ODBC Driver 17 for SQL Server')
-SQL_TRUSTED = os.getenv('SQL_TRUSTED_CONNECTION', 'yes').lower() in ('1','true','yes','y')
+# Giữ các tên cũ để các script quản trị hiện tại vẫn dùng được.
+SQL_SERVER = settings.sql_server
+SQL_DATABASE = settings.sql_database
+SQL_DRIVER = settings.sql_driver
+SQL_TRUSTED = settings.sql_trusted_connection
 
 
 def get_connection():
@@ -20,6 +22,6 @@ def get_connection():
         parts.append('Trusted_Connection=yes')
         parts.append('TrustServerCertificate=yes')
     else:
-        parts.append(f'UID={os.getenv("SQL_USER", "")}')
-        parts.append(f'PWD={os.getenv("SQL_PASSWORD", "")}')
+        parts.append(f'UID={settings.sql_user}')
+        parts.append(f'PWD={settings.sql_password}')
     return pyodbc.connect(';'.join(parts), timeout=5)

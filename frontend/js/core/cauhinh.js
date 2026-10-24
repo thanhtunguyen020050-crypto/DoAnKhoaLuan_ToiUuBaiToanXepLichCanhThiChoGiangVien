@@ -28,6 +28,7 @@ const IC={
   plus:svg('<path d="M12 5v14M5 12h14"/>'),
   upload:svg('<path d="M12 16V4M7 9l5-5 5 5M5 20h14"/>'),
   search:svg('<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>'),
+  refresh:svg('<path d="M20 11a8 8 0 0 0-14.9-3L3 11M4 13a8 8 0 0 0 14.9 3L21 13"/><path d="M3 6v5h5M21 18v-5h-5"/>'),
   logout:svg('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>'),
   ok:svg('<circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/>',18),
   warn:svg('<path d="M12 3l10 18H2z"/><path d="M12 10v4M12 18h.01"/>',18),

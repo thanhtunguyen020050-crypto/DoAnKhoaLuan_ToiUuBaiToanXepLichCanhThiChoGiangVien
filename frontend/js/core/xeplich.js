@@ -11,14 +11,15 @@ function targets(){
   for(let i=0;used<tot;i=(i+1)%fr.length,used++)t[fr[i].l.id]++;
   return t;
 }
-const tg=targets;
+const tg=()=>S.lecs.length&&S.lecs.every(l=>l.quota_authoritative)?Object.fromEntries(S.lecs.map(l=>[String(l.id),Number(l.quota)||0])):targets();
 async function persistAssignments(){
   const maDot=S.exams.find(e=>e.ma_dot)?.ma_dot||window.__MA_DOT;
   if(!maDot)throw new Error('Không xác định được đợt thi để lưu phân công.');
   const assignments=S.exams.flatMap(e=>e.asg.map(a=>({ma_ca:e.ma_ca,ma_gv:String(a.l)})));
-  return API.saveAssignments(maDot,assignments);
+  const dinhMuc=S.lecs.map(l=>({ma_gv:String(l.id),ty_le:Number(l.pct)||0}));
+  return API.saveAssignments(maDot,assignments,dinhMuc);
 }
-function syncQuota(){if(!S.exams.length)return;const T=targets();S.lecs.forEach(l=>l.quota=T[l.id]??0)}
+function syncQuota(){if(!S.exams.length)return;const T=targets();S.lecs.forEach(l=>{if(!l.quota_authoritative)l.quota=T[l.id]??0})}
 function loadOf(lid,except){let n=0;S.exams.forEach(e=>{if(e.id!==except)n+=e.asg.filter(a=>a.l===lid).length});return n}
 function rangeFor(e){if(e.period){const m=String(e.period).match(/(\d+)\s*[→>-]\s*(\d+)/);if(m)return[+m[1],+m[2]]}return({1:[1,2],2:[3,4],3:[7,8],4:[9,10]})[e.ses]||[0,0]}
 function overlaps(a,b){const x=rangeFor(a),y=rangeFor(b);return x[0]<=y[1]&&y[0]<=x[1]}
@@ -59,6 +60,7 @@ async function autoRun(){
     lecturers:S.lecs,
     exams:S.exams.map(e=>({...e,asg:e.asg.map(a=>({...a,lock:!!a.lock&&!invalidLocks.has(String(e.id)+'|'+String(a.l))}))})),
     soft:S.soft,
+    ma_dot:window.__MA_DOT,
     time_limit_seconds:30
   };
   try{
@@ -73,18 +75,23 @@ async function autoRun(){
       const e=S.exams.find(x=>String(x.id)===String(a.exam_id));
       if(e)e.asg.push({l:a.lecturer_id,lock:!!a.locked});
     });
+    if(result.quotas){
+      S.lecs.forEach(l=>{l.quota=Number(result.quotas[String(l.id)]||0);l.quota_authoritative=true});
+    }
     snapshot('Google OR-Tools CP-SAT');
     pre=null;save();render();
     const report=analyze();
-    const gap=report.S1;
-    const elapsed=Number(result.wall_time_seconds||0).toFixed(2);
-    let saved='';
-    try{await persistAssignments();saved=' Đã lưu phân công lên SQL Server để trang giảng viên xem được.'}
-    catch(e){saved=' Lịch hiện mới nằm trên trình duyệt này, chưa lưu được vào SQL Server: '+(e.message||e)}
-    toast((result.status==='OPTIMAL'?'Đã tìm được nghiệm tối ưu. ':'Đã tìm được nghiệm khả thi. ')+
-      (invalidLocks.size?'Đã mở khóa '+invalidLocks.size+' phân công vi phạm ràng buộc để xếp lại. ':'')+
-      'CP-SAT chạy '+elapsed+' giây; '+report.assigned+' lượt phân công; điểm đánh giá '+(report.overall==null?'—':report.overall+'%')+'. '+
-      'Tổng lượt ngày giảng viên lên trường: '+gap.total+'.'+saved);
+    const hardFailures=hardConstraintFailures(report);
+    if(hardFailures.length){
+      toast('Chưa xếp lịch thành công: còn vi phạm ràng buộc cứng — '+hardFailures.map(x=>x.name+' '+x.pct+'%').join(', ')+'.');
+      return;
+    }
+    try{
+      await persistAssignments();
+      toast('Xếp lịch thành công.');
+    }catch(e){
+      toast('Đã xếp lịch nhưng chưa lưu được dữ liệu: '+(e.message||e));
+    }
   }catch(e){
     toast('Không gọi được thuật toán CP-SAT: '+(e.message||e));
   }
@@ -130,6 +137,9 @@ function analyze(){
   HARD.forEach(h=>{const x=r[h.id];const p=x.total?Math.round(x.ok/x.total*100):null;list.push({id:h.id,name:h.name,hard:true,pct:p,ok:x.ok,total:x.total});if(p!=null){sw+=10;sp+=10*p}});
   SOFT.forEach(s=>{if(!so[s.id].on)return;const x=r[s.id];const p=x.total?Math.round(x.ok/x.total*100):null;list.push({id:s.id,name:s.id==='S2'?s.name+' (mục tiêu '+so.S2.n+'%)':s.name,hard:false,pct:p,ok:x.ok,total:x.total});if(p!=null){sw+=so[s.id].w;sp+=so[s.id].w*p}});
   return{list:list,overall:asg.length&&sw?Math.round(sp/sw):null,assigned:asg.length,S1:r.S1};
+}
+function hardConstraintFailures(report=analyze()){
+  return report.list.filter(item=>item.hard&&item.pct!==null&&item.pct<100);
 }
 function precheck(){
   const out=[];const add=(lv,t)=>out.push({lv:lv,t:t});

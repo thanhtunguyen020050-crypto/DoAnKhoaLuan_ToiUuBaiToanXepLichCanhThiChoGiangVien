@@ -121,7 +121,17 @@ def solve_schedule(payload: dict[str, Any]) -> dict[str, Any]:
 
     lec_by_id = {str(l.get("id")): l for l in lecturers}
     exam_by_id = {str(e.get("id")): e for e in exams}
-    quota = _quotas(lecturers, exams)
+    # When called by the application, the API supplies the quotas calculated
+    # by SQL Server. That keeps CP-SAT's RB1 limits identical to the trigger
+    # that validates the final save. Standalone callers can still derive them
+    # from percentages as before.
+    if payload.get("use_authoritative_quotas"):
+        quota = {
+            str(lec.get("id")): max(0, int(lec.get("quota", 0) or 0))
+            for lec in lecturers
+        }
+    else:
+        quota = _quotas(lecturers, exams)
     model = cp_model.CpModel()
     x: dict[tuple[str, str], Any] = {}
 
@@ -253,6 +263,7 @@ def solve_schedule(payload: dict[str, Any]) -> dict[str, Any]:
     if status_code not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         return {"status": status, "assignments": [], "missing": sum(max(0, int(e.get("need", 0) or 0)) for e in exams),
                 "objective_value": None, "wall_time_seconds": solver.WallTime(),
+                "quotas": quota,
                 "message": "Không tìm được lịch thỏa các ràng buộc cứng (định mức, trùng ca, lịch dạy, lịch bận mức 1, không trộn loại ca trong cùng buổi). Hãy kiểm tra dữ liệu và phân công đã khóa."}
 
     assignments = []
@@ -267,4 +278,5 @@ def solve_schedule(payload: dict[str, Any]) -> dict[str, Any]:
     missing = max(0, needed - len(assignments))
     return {"status": status, "assignments": assignments, "missing": missing,
             "objective_value": solver.ObjectiveValue(), "wall_time_seconds": solver.WallTime(),
+            "quotas": quota,
             "message": "Đã tìm được lịch bằng Google OR-Tools CP-SAT."}

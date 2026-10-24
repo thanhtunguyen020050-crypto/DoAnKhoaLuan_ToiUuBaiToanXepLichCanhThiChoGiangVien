@@ -9,8 +9,8 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel, Field
 try:
-    from .ketnoi_sql import get_connection  # type: ignore
-    from .auth_utils import create_token
+    from ..ketnoi_sql import get_connection
+    from ..auth_utils import create_token
 except ImportError:
     from ketnoi_sql import get_connection
     from auth_utils import create_token

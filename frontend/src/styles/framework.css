@@ -1,0 +1,14 @@
+.framework-loading,
+.framework-error {
+  margin: 24px;
+  padding: 16px 20px;
+  border: 1px solid var(--line, #d8e3f3);
+  border-radius: 12px;
+  background: var(--card, #fff);
+  color: var(--ink, #10233f);
+}
+
+.framework-error {
+  border-color: var(--bad, #c0283a);
+  color: var(--bad, #c0283a);
+}

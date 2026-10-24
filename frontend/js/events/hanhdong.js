@@ -31,7 +31,7 @@ const A={
   },
   logout(){cur=null;sessionStorage.removeItem('authRole');sessionStorage.removeItem('authUsername');sessionStorage.removeItem('authToken');sessionStorage.removeItem('lecturerSession');sessionStorage.removeItem('mustChangePassword');location.replace('login.html')},
   go(t){view=t.dataset.v;render();window.scrollTo(0,0);if(view==='accounts')A['load-user-accounts']();if(view==='busy_reqs')A['load-busy-requests']();},
-  async 'load-user-accounts'(){accountsLoading=true;accountsError='';render();try{const r=await API.userAccounts();adminAccounts=r.items||[]}catch(e){accountsError=e.message==='Not Found'?'Backend chưa nhận API quản lý account. Hãy khởi động lại backend rồi bấm “Tải lại từ CSDL”.':(e.message||'Không tải được danh sách tài khoản.')}finally{accountsLoading=false;render()}},
+  async 'load-user-accounts'(){accountsLoading=true;accountsError='';render();try{const r=await API.userAccounts();adminAccounts=r.items||[]}catch(e){accountsError=e.message==='Not Found'?'Backend chưa nhận API quản lý account. Hãy khởi động lại backend rồi bấm “Làm mới dữ liệu”.':(e.message||'Không tải được danh sách tài khoản.')}finally{accountsLoading=false;render()}},
   'reset-user-password'(t){
     const maGV=t.dataset.id, account=adminAccounts.find(a=>String(a.MaGV)===String(maGV));
     openModal({title:'Cấp mật khẩu tạm',body:'<p class="muted">Cấp mật khẩu mới cho <b>'+esc(account&&account.HoTen||maGV)+'</b> ('+esc(maGV)+'). Mật khẩu hiện tại sẽ mất hiệu lực.</p><label class="f"><span>Nhập lại mật khẩu Admin để xác nhận</span><input type="password" id="resetAdminPassword" autocomplete="current-password" required></label><div class="err" id="resetPasswordError" role="alert"></div>',foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="confirm-reset-user-password" data-id="'+esc(maGV)+'">Cấp mật khẩu tạm</button>'});
@@ -61,6 +61,56 @@ const A={
       busyReqsLoading=false;render();
     }
   },
+  async 'accept-all-busy-requests'(t){
+    const requests=adminBusyRequests.filter(r=>r.TrangThai==='PENDING');
+    if(!requests.length){toast('Không có đơn đang chờ để chấp nhận.');return}
+    const scope=busyReqSearch.trim()||busyReqFilter!=='ALL'
+      ? 'trong danh sách đang lọc/tìm kiếm'
+      : 'đang hiển thị';
+    if(!confirm(`Chấp nhận tất cả ${requests.length} đơn đang chờ ${scope}? Mỗi đơn sẽ dùng giảng viên được nhờ và được kiểm tra lại RB1–RB6. Đơn không còn đủ điều kiện sẽ không cập nhật lịch.`))return;
+
+    t.disabled=true;
+    t.setAttribute('aria-busy','true');
+    const approved=[], failed=[];
+    for(let i=0;i<requests.length;i++){
+      const row=requests[i], id=row.MaYeuCau;
+      t.textContent=`Đang duyệt ${i+1}/${requests.length}…`;
+      try{
+        const detail=await API.adminBusyRequestDetail(id);
+        if(detail.TrangThai!=='PENDING')throw new Error('Yêu cầu đã được xử lý trước đó.');
+        const nominee=detail.MaGVThayTheDeNghi;
+        if(!nominee)throw new Error('Chưa có giảng viên được nhờ coi thay.');
+
+        // Re-check against the live schedule before each approval. The approve API
+        // validates the constraints again inside its SQL transaction.
+        const result=await API.adminBusyRequestCandidates(id);
+        const candidate=(result.candidates||[]).find(c=>String(c.MaGV)===String(nominee));
+        if(!candidate)throw new Error('Không tìm thấy giảng viên được nhờ trong danh sách thay thế.');
+        if(!candidate.HopLe)throw new Error('Giảng viên được nhờ hiện không còn đủ điều kiện theo RB1–RB6.');
+
+        await API.adminApproveBusyRequest(id, nominee, null);
+        approved.push(id);
+      }catch(err){
+        failed.push({id,message:err.message||'Không thể chấp nhận yêu cầu.'});
+      }
+    }
+
+    await A['load-busy-requests']();
+    if(approved.length)await bootSQL();
+
+    const failedHtml=failed.length
+      ? '<div class="panel" style="margin-top:12px;background:var(--sub)"><b>Các đơn chưa được chấp nhận</b><ul style="margin:8px 0 0;padding-left:20px">'+failed.map(x=>'<li style="margin:6px 0"><b>Đơn #'+esc(x.id)+':</b> '+esc(x.message)+'</li>').join('')+'</ul></div>'
+      : '<p class="hint">Tất cả đơn đang chờ trong danh sách đều đã được cập nhật.</p>';
+    const approvedHtml=approved.length
+      ? '<p><b>Đã chấp nhận '+approved.length+'/'+requests.length+' đơn.</b> Lịch coi thi đã được cập nhật cho các đơn này.</p>'
+      : '<p><b>Chưa có đơn nào được chấp nhận.</b> Lịch coi thi không thay đổi.</p>';
+    openModal({
+      title:'Kết quả chấp nhận hàng loạt',
+      wide:true,
+      body:approvedHtml+failedHtml,
+      foot:'<button class="btn pri" data-act="close">Đóng</button>'
+    });
+  },
   async 'process-busy-request'(t){
     const id=t.dataset.id;
     openModal({title:`Đang tải yêu cầu #${id}…`,body:'<p class="muted">Đang lấy dữ liệu chi tiết và phân tích ràng buộc giảng viên thay thế…</p>',foot:'<button class="btn" data-act="close">Đóng</button>'});
@@ -70,39 +120,38 @@ const A={
         API.adminBusyRequestCandidates(id)
       ]);
       const cands=candResp.candidates||[];
+      const eligibleCands=cands.filter(c=>c.HopLe);
+      const excludedCands=cands.length-eligibleCands.length;
       window.__CURRENT_BUSY_DETAIL = detail;
       window.__CURRENT_BUSY_CANDIDATES = cands;
 
-      const candRowsHtml = cands.map(c => {
+      const candRowsHtml = eligibleCands.map(c => {
         const quotaInfo = `Đã có ${c.DaCo}/${c.DinhMuc} ca`;
-        const badge = c.HopLe
-          ? '<span class="chip ok">Đủ điều kiện (0 vi phạm)</span>'
-          : '<span class="chip bad">Không phù hợp</span>';
-        const errList = c.ViPham.map(v => `<small style="color:var(--bad);display:block;margin-top:2px">• ${esc(v)}</small>`).join('');
 
-        return `<label class="u-opt" data-q="${esc((c.HoTen+' '+c.MaGV+' '+c.TenBoMon).toLowerCase())}" style="display:flex;align-items:flex-start;gap:10px;padding:8px 10px;margin-bottom:6px;border:1px solid var(--line);border-radius:6px;background:${c.HopLe?'var(--panel)':'#fff8f8'}">
-          <input type="radio" name="candRadio" value="${esc(c.MaGV)}" data-name="${esc(c.HoTen)}" data-valid="${c.HopLe?'1':'0'}" style="margin-top:4px">
-          <div style="flex:1;min-width:0">
-            <div style="display:flex;justify-content:space-between;align-items:center">
-              <b>${esc(c.HoTen)} (${esc(c.MaGV)})</b>
-              ${badge}
+        return `<label class="busy-candidate" data-q="${esc((c.HoTen+' '+c.MaGV+' '+c.TenBoMon).toLowerCase())}">
+          <input type="radio" name="candRadio" value="${esc(c.MaGV)}" data-name="${esc(c.HoTen)}" data-valid="1" ${c.MaGV===detail.MaGVThayTheDeNghi?'checked':''}>
+          <div class="busy-candidate-info">
+            <div class="busy-candidate-title">
+              <b>${esc(c.HoTen)} (${esc(c.MaGV)})${c.MaGV===detail.MaGVThayTheDeNghi?' <span class="chip warn">Được giảng viên nhờ</span>':''}</b>
+              <span class="chip ok">Đủ điều kiện</span>
             </div>
-            <div class="muted" style="font-size:12.5px">${esc(c.TenBoMon)} · ${quotaInfo}</div>
-            ${errList}
+            <div class="muted busy-candidate-meta">${esc(c.TenBoMon)} · ${quotaInfo}</div>
           </div>
         </label>`;
-      }).join('') || '<p class="muted">Không có giảng viên thay thế khả dụng.</p>';
+      }).join('') || '<p class="muted">Không có giảng viên nào hiện đủ điều kiện thay thế cho ca này.</p>';
 
       openModal({
         title: `Xử lý yêu cầu báo bận #${detail.MaYeuCau} - ${esc(detail.HoTen)}`,
         wide: true,
+        className: 'busy-request-modal',
         body: `
-          <div style="display:grid;grid-template-columns:1.2fr 1.8fr;gap:16px">
-            <div>
+          <div class="busy-request-layout">
+            <div class="busy-request-summary">
               <div class="panel" style="margin-bottom:12px;background:var(--sub)">
                 <h4 style="margin-top:0">1. Thông tin báo bận</h4>
                 <div><b>Giảng viên:</b> ${esc(detail.HoTen)} (${esc(detail.MaGV)})</div>
                 <div><b>Đơn vị:</b> ${esc(detail.TenBoMon)}, ${esc(detail.TenKhoa)}</div>
+                <div style="margin-top:6px"><b>Giảng viên được nhờ:</b> ${esc(detail.TenGVThayTheDeNghi||'Chưa có')} ${detail.MaGVThayTheDeNghi?'('+esc(detail.MaGVThayTheDeNghi)+')':''}</div>
                 <div style="margin-top:6px"><b>Ca thi liên quan:</b> <span class="chip warn">${esc(detail.MaCa||'Chưa gán ca')}</span></div>
                 ${detail.NgayThi ? `<div><b>Thời gian ca:</b> ${fmtD(detail.NgayThi)} · Tiết ${detail.TuTiet}–${detail.DenTiet} (Phòng: ${esc(detail.PhongThi||'—')})</div>` : ''}
                 <div style="margin-top:6px"><b>Khoảng thời gian bận:</b><br><small>${esc(detail.ThoiGianBatDauBan ? detail.ThoiGianBatDauBan.replace('T',' ') : '')} → ${esc(detail.ThoiGianKetThucBan ? detail.ThoiGianKetThucBan.replace('T',' ') : '')}</small></div>
@@ -113,20 +162,20 @@ const A={
 
               <div class="panel" style="background:var(--sub)">
                 <h4 style="margin-top:0">2. Lịch hiện tại của GV</h4>
-                <div style="font-size:12.5px;max-height:160px;overflow-y:auto">
+                <div style="font-size:12.5px">
                   <b>Ca coi thi đã phân công (${(detail.current_schedule||[]).length}):</b>
                   ${(detail.current_schedule||[]).map(s => `<div style="padding:2px 0;border-bottom:1px solid var(--line)">• ${fmtD(s.NgayThi)} (T${s.TuTiet}-${s.DenTiet}) - ${esc(s.MaCa)}${s.MaCa===detail.MaCa?' <span class="chip bad">Báo bận</span>':''}</div>`).join('') || '<div class="muted">Không có ca thi khác</div>'}
                 </div>
               </div>
             </div>
 
-            <div>
+            <div class="busy-request-options">
               <h4 style="margin-top:0">3. Chọn phương án phân công giảng viên thay thế</h4>
-              <p class="sub" style="margin-bottom:8px">Hệ thống đã tự động kiểm tra RB1-RB6 đối với từng giảng viên cho ca <b>${esc(detail.MaCa)}</b>. Ưu tiên chọn giảng viên đủ điều kiện (màu xanh).</p>
+              <p class="sub" style="margin-bottom:8px">Có ${eligibleCands.length} giảng viên đủ điều kiện theo RB1–RB6 cho ca <b>${esc(detail.MaCa)}</b>. Người được giảng viên nhờ đã được chọn sẵn.${excludedCands?` ${excludedCands} người không đạt điều kiện đã được ẩn.`:''}</p>
               
               <input type="search" id="candQuickSearch" placeholder="Tìm theo tên hoặc mã giảng viên thay thế..." style="width:100%;margin-bottom:8px">
 
-              <div id="candContainer" style="max-height:260px;overflow-y:auto;padding-right:4px">
+              <div id="candContainer" class="busy-request-candidates">
                 ${candRowsHtml}
               </div>
 
@@ -289,6 +338,8 @@ const A={
             <small class="muted">Ca thi liên quan:</small><br>
             ${d.MaCa ? `<b>${esc(d.MaCa)}</b> (${fmtD(d.NgayThi)}, Tiết ${d.TuTiet}–${d.DenTiet}, Phòng ${esc(d.PhongThi||'—')})` : '<i>Không gắn ca cụ thể</i>'}
           </div>
+
+          <div style="margin-top:12px"><small class="muted">Giảng viên được nhờ coi thay:</small><br><b>${esc(d.TenGVThayTheDeNghi||'—')}</b>${d.MaGVThayTheDeNghi?' ('+esc(d.MaGVThayTheDeNghi)+')':''}</div>
 
           <div style="margin-top:12px">
             <small class="muted">Khoảng thời gian bận:</small><br>
@@ -518,7 +569,7 @@ const A={
       body:'<p style="margin-bottom:14px">Thao tác này sẽ xóa <b>'+total+' ca thi</b>'+(asg?' và <b>'+asg+' lượt phân công</b> liên quan':'')+' khỏi bảng <b>CaThi</b> trong SQL Server.</p>'
         +'<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:var(--badbg);color:var(--bad);font-size:13px">'
         +'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
-        +'<span>Dữ liệu bị xóa <b>không thể khôi phục</b>. Toàn bộ ca thi và các phân công giám thị đã có sẽ bị xóa vĩnh viễn.</span></div>'
+        +'<span>Dữ liệu bị xóa <b>không thể khôi phục</b>. Toàn bộ ca thi, phân công, yêu cầu đổi ca và lịch sử đổi ca liên quan sẽ bị xóa. Yêu cầu báo bận vẫn được giữ nhưng không còn gắn với ca đã xóa.</span></div>'
         +'<div class="err" id="clearAllExamsErr" style="margin-top:10px"></div>',
       foot:'<button class="btn" data-act="close">Hủy</button>'
         +'<button style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border:0;border-radius:8px;background:var(--bad);color:#fff;font-weight:600;font-size:14px;cursor:pointer" data-act="do-clear-all-exams">'
@@ -533,7 +584,7 @@ const A={
       toast('Đã xóa '+r.deleted+' ca thi khỏi SQL Server.');
     }catch(e){const er=$('#clearAllExamsErr');if(er)er.textContent=e.message||'Không xóa được ca thi.'}
   },
-  async 'del-exam'(t){const e=exm(+t.dataset.id);if(!e)return;if(!confirm('Xóa ca thi này khỏi SQL Server?'))return;try{await API.deleteExam(e.ma_ca);await refreshExamData(false);toast('Đã xóa ca thi khỏi SQL Server.')}catch(x){toast(x.message)}},
+  async 'del-exam'(t){const e=exm(+t.dataset.id);if(!e)return;if(!confirm('Xóa ca thi này khỏi SQL Server? Phân công, yêu cầu đổi ca và lịch sử đổi ca liên quan cũng sẽ bị xóa. Yêu cầu báo bận được giữ lại nhưng bỏ liên kết với ca này.'))return;try{await API.deleteExam(e.ma_ca);await refreshExamData(false);toast('Đã xóa ca thi khỏi SQL Server.')}catch(x){toast(x.message)}},
   'edit-exam'(t){examForm(exm(+t.dataset.id))},
   async 'do-import-exam'(){
     if(!pend||!pend.rows.length)return;
@@ -552,7 +603,11 @@ const A={
   'pick-ok'(t){
     const e=exm(pick.ex),lid=t.dataset.l;if(e.asg.length>=e.need){toast('Ca thi đã đủ giảng viên cần phân công.');return}const issues=hardIssues(e,lid);if(issues.length){toast('Không thể phân công: '+issues.join(', '));return}const lock=$('#lockNew').checked;e.asg.push({l:lid,lock:lock});closeModal();render();
   },
-  async 'publish-assignments'(){try{const r=await persistAssignments();toast('Đã lưu '+r.assignments_saved+' lượt phân công lên SQL Server. Trang giảng viên có thể làm mới để xem lịch.')}catch(e){toast(e.message||'Không lưu được phân công lên SQL Server.')}},
+  async 'publish-assignments'(){
+    const failures=hardConstraintFailures();
+    if(failures.length){toast('Chưa lưu được: còn vi phạm ràng buộc cứng — '+failures.map(x=>x.name+' '+x.pct+'%').join(', ')+'. Hãy xếp lại hoặc sửa phân công trước.');return}
+    try{await persistAssignments();toast('Đã lưu thành công, giảng viên có thể xem lịch.')}catch(e){toast('Không lưu được phân công: '+(e.message||e))}
+  },
   lock(t){const e=exm(+t.dataset.ex),a=e.asg.find(x=>String(x.l)===String(t.dataset.l));a.lock=!a.lock;render()},
   unasg(t){const e=exm(+t.dataset.ex);e.asg=e.asg.filter(x=>String(x.l)!==String(t.dataset.l));render()},
   'clear-unlocked'(){let n=0;S.exams.forEach(e=>{const k=e.asg.filter(a=>a.lock);n+=e.asg.length-k.length;e.asg=k});render();toast('Đã xóa '+n+' phân công chưa khóa.')},

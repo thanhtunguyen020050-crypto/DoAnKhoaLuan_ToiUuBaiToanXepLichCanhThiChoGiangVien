@@ -2,8 +2,13 @@
 
 ## Phân chia module
 
-- `main.py`: khởi tạo FastAPI và giữ các API dữ liệu hiện có.
-- `routers/scheduling.py`: endpoint `POST /api/xep-lich/cpsat`.
+- `main.py`: tạo ứng dụng FastAPI và đăng ký các Controller.
+- `controllers/admin_*.py`: endpoint quản trị, chuyển xử lý cho Models.
+- `schemas/admin.py`: request models quản trị được kiểm tra bằng Pydantic.
+- `core/config.py`: cấu hình tập trung đọc từ `.env`.
+- `models/admin_*.py`: truy vấn SQL và xử lý dữ liệu theo chức năng.
+- `models/admin_helpers.py`: hàm hỗ trợ truy xuất dữ liệu dùng chung.
+- `controllers/scheduling.py`: endpoint `POST /api/xep-lich/cpsat`.
 - `schemas/scheduling.py`: kiểm tra cấu trúc request/response bằng Pydantic.
 - `services/cpsat_solver.py`: mô hình Google OR-Tools CP-SAT; không chứa HTTP hoặc SQL.
 - `ketnoi_sql.py`: kết nối SQL Server, độc lập với solver.

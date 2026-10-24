@@ -62,7 +62,7 @@ window.API = (() => {
     async updateExam(id,x){return req('/ca-thi/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(x)})},
     async deleteExam(id){return req('/ca-thi/'+encodeURIComponent(id),{method:'DELETE'})},
     async clearAllExams(){return req('/ca-thi/all',{method:'DELETE'})},
-    async saveAssignments(maDot,assignments){return req('/dot-thi/'+encodeURIComponent(maDot)+'/phan-cong',{method:'POST',body:JSON.stringify({assignments})})},
+    async saveAssignments(maDot,assignments,dinhMuc=[]){return req('/dot-thi/'+encodeURIComponent(maDot)+'/phan-cong',{method:'POST',body:JSON.stringify({assignments,dinh_muc:dinhMuc})})},
     async lecturers(dot){return req('/giang-vien'+(dot?'?ma_dot='+encodeURIComponent(dot):''))},
     async createLecturer(x){return req('/giang-vien',{method:'POST',body:JSON.stringify(x)})},
     async updateLecturer(id,x){return req('/giang-vien/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(x)})},

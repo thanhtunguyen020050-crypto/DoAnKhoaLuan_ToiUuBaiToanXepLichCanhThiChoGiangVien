@@ -1000,3 +1000,127 @@ GO
 -- EXEC dbo.sp_KiemTraRangBuoc @MaDot='DOT2026_01';
 -- EXEC dbo.sp_ChotXepLich @MaDot='DOT2026_01';
 GO
+IF OBJECT_ID(N'dbo.YeuCauBaoBan', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.YeuCauBaoBan (
+        MaYeuCau BIGINT IDENTITY(1,1) NOT NULL
+            CONSTRAINT PK_YeuCauBaoBan PRIMARY KEY,
+        MaGV VARCHAR(20) NOT NULL,
+        MaCa VARCHAR(50) NULL,
+        MaGVThayTheDeNghi VARCHAR(20) NULL,
+        ThoiGianBatDauBan DATETIME2 NOT NULL,
+        ThoiGianKetThucBan DATETIME2 NOT NULL,
+        LyDoBaoBan NVARCHAR(500) NOT NULL,
+        GhiChuGV NVARCHAR(500) NULL,
+        TrangThai VARCHAR(20) NOT NULL
+            CONSTRAINT DF_YCBB_TrangThai DEFAULT ('PENDING'),
+        LyDoTuChoi NVARCHAR(500) NULL,
+        GhiChuAdmin NVARCHAR(500) NULL,
+        NguoiXuLy NVARCHAR(100) NULL,
+        ThoiGianGui DATETIME2 NOT NULL
+            CONSTRAINT DF_YCBB_ThoiGianGui DEFAULT (SYSDATETIME()),
+        ThoiGianXuLy DATETIME2 NULL,
+        CONSTRAINT FK_YCBB_GiangVien FOREIGN KEY (MaGV)
+            REFERENCES dbo.GiangVien(MaGV),
+        CONSTRAINT FK_YCBB_CaThi FOREIGN KEY (MaCa)
+            REFERENCES dbo.CaThi(MaCa),
+        CONSTRAINT FK_YCBB_GVThayThe FOREIGN KEY (MaGVThayTheDeNghi)
+            REFERENCES dbo.GiangVien(MaGV),
+        CONSTRAINT CK_YCBB_ThoiGian CHECK (ThoiGianBatDauBan < ThoiGianKetThucBan),
+        CONSTRAINT CK_YCBB_TrangThai CHECK (TrangThai IN ('PENDING','APPROVED','REJECTED'))
+    );
+END;
+GO
+
+/* Bổ sung cột cho database đã có bảng YeuCauBaoBan từ phiên bản cũ. */
+IF COL_LENGTH(N'dbo.YeuCauBaoBan', N'MaGVThayTheDeNghi') IS NULL
+    ALTER TABLE dbo.YeuCauBaoBan ADD MaGVThayTheDeNghi VARCHAR(20) NULL;
+GO
+
+IF NOT EXISTS (
+    SELECT 1 FROM sys.foreign_keys
+    WHERE parent_object_id = OBJECT_ID(N'dbo.YeuCauBaoBan')
+      AND name = N'FK_YCBB_GVThayThe'
+)
+BEGIN
+    ALTER TABLE dbo.YeuCauBaoBan
+        ADD CONSTRAINT FK_YCBB_GVThayThe
+        FOREIGN KEY (MaGVThayTheDeNghi) REFERENCES dbo.GiangVien(MaGV);
+END;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.YeuCauBaoBan') AND name=N'IX_YCBB_GV_TrangThai')
+    CREATE INDEX IX_YCBB_GV_TrangThai ON dbo.YeuCauBaoBan(MaGV,TrangThai,ThoiGianGui DESC);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.YeuCauBaoBan') AND name=N'IX_YCBB_TrangThai')
+    CREATE INDEX IX_YCBB_TrangThai ON dbo.YeuCauBaoBan(TrangThai,ThoiGianGui DESC);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.YeuCauBaoBan') AND name=N'IX_YCBB_Ca')
+    CREATE INDEX IX_YCBB_Ca ON dbo.YeuCauBaoBan(MaCa);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.YeuCauBaoBan') AND name=N'IX_YCBB_GVThayThe')
+    CREATE INDEX IX_YCBB_GVThayThe ON dbo.YeuCauBaoBan(MaGVThayTheDeNghi,TrangThai);
+GO
+
+IF OBJECT_ID(N'dbo.LichSuDieuChinhLich', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.LichSuDieuChinhLich (
+        MaLichSu BIGINT IDENTITY(1,1) NOT NULL
+            CONSTRAINT PK_LichSuDieuChinhLich PRIMARY KEY,
+        MaYeuCau BIGINT NOT NULL,
+        MaGV VARCHAR(20) NOT NULL,
+        MaGVThayThe VARCHAR(20) NULL,
+        MaCa VARCHAR(50) NOT NULL,
+        PhanCongTruoc NVARCHAR(500) NOT NULL,
+        PhanCongSau NVARCHAR(500) NOT NULL,
+        NguoiThucHien NVARCHAR(100) NOT NULL,
+        ThoiDiem DATETIME2 NOT NULL
+            CONSTRAINT DF_LSDCL_ThoiDiem DEFAULT (SYSDATETIME()),
+        HanhDong NVARCHAR(100) NOT NULL,
+        LyDo NVARCHAR(500) NULL,
+        CONSTRAINT FK_LSDCL_YeuCau FOREIGN KEY (MaYeuCau)
+            REFERENCES dbo.YeuCauBaoBan(MaYeuCau),
+        CONSTRAINT FK_LSDCL_GiangVien FOREIGN KEY (MaGV)
+            REFERENCES dbo.GiangVien(MaGV),
+        CONSTRAINT FK_LSDCL_GiangVienThayThe FOREIGN KEY (MaGVThayThe)
+            REFERENCES dbo.GiangVien(MaGV),
+        CONSTRAINT FK_LSDCL_CaThi FOREIGN KEY (MaCa)
+            REFERENCES dbo.CaThi(MaCa)
+    );
+END;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.LichSuDieuChinhLich') AND name=N'IX_LSDCL_YeuCau')
+    CREATE INDEX IX_LSDCL_YeuCau ON dbo.LichSuDieuChinhLich(MaYeuCau,ThoiDiem DESC);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'dbo.LichSuDieuChinhLich') AND name=N'IX_LSDCL_GV')
+    CREATE INDEX IX_LSDCL_GV ON dbo.LichSuDieuChinhLich(MaGV,ThoiDiem DESC);
+GO
+
+IF OBJECT_ID(N'dbo.ThongBao', N'U') IS NULL
+    THROW 54001, N'Không tìm thấy dbo.ThongBao. Hãy tạo các bảng nền trước khi chạy phần báo bận.', 1;
+GO
+
+IF COL_LENGTH(N'dbo.ThongBao', N'YeuCauBaoBanID') IS NULL
+    ALTER TABLE dbo.ThongBao ADD YeuCauBaoBanID BIGINT NULL;
+GO
+
+IF NOT EXISTS (
+    SELECT 1 FROM sys.foreign_keys
+    WHERE parent_object_id = OBJECT_ID(N'dbo.ThongBao')
+      AND name = N'FK_TB_YCBB'
+)
+BEGIN
+    ALTER TABLE dbo.ThongBao
+        ADD CONSTRAINT FK_TB_YCBB
+        FOREIGN KEY (YeuCauBaoBanID) REFERENCES dbo.YeuCauBaoBan(MaYeuCau);
+END;
+GO
+
+PRINT N'Đã bổ sung cấu trúc báo bận/nhờ coi thay; không xóa dữ liệu.';
+GO
+
+/* Kiểm tra nhanh hai cột mà backend sử dụng. */
+SELECT N'YeuCauBaoBan.MaGVThayTheDeNghi' AS Cot,
+       CASE WHEN COL_LENGTH(N'dbo.YeuCauBaoBan',N'MaGVThayTheDeNghi') IS NOT NULL THEN N'OK' ELSE N'THIẾU' END AS TrangThai
+UNION ALL
+SELECT N'ThongBao.YeuCauBaoBanID',
+       CASE WHEN COL_LENGTH(N'dbo.ThongBao',N'YeuCauBaoBanID') IS NOT NULL THEN N'OK' ELSE N'THIẾU' END;
+GO
+

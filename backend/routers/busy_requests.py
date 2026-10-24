@@ -25,6 +25,10 @@ class BusyRequestCreateIn(BaseModel):
     ghi_chu: str | None = Field(default=None, max_length=500)
 
 
+class BusyRequestNominateIn(BaseModel):
+    ma_gv_thay_the: str = Field(min_length=1, max_length=20)
+
+
 class BusyRequestApproveIn(BaseModel):
     ma_gv_thay_the: str = Field(min_length=1, max_length=20)
     ghi_chu_admin: str | None = Field(default=None, max_length=500)
@@ -157,9 +161,11 @@ def get_my_busy_requests(ma_gv: str = Depends(require_lecturer)):
                        CONVERT(varchar(19), y.ThoiGianGui, 120) AS ThoiGianGui,
                        CONVERT(varchar(19), y.ThoiGianXuLy, 120) AS ThoiGianXuLy,
                        c.NgayThi, c.Thu, c.TuTiet, c.DenTiet, c.Buoi, c.PhongThi, c.HinhThucThi,
+                       y.MaGVThayTheDeNghi, gvde.HoTen AS TenGVThayTheDeNghi,
                        ls.MaGVThayThe, gvtt.HoTen AS TenGVThayThe, ls.PhanCongSau
                 FROM dbo.YeuCauBaoBan y
                 LEFT JOIN dbo.CaThi c ON c.MaCa = y.MaCa
+                LEFT JOIN dbo.GiangVien gvde ON gvde.MaGV = y.MaGVThayTheDeNghi
                 LEFT JOIN dbo.LichSuDieuChinhLich ls ON ls.MaYeuCau = y.MaYeuCau
                 LEFT JOIN dbo.GiangVien gvtt ON gvtt.MaGV = ls.MaGVThayThe
                 WHERE y.MaGV = ?
@@ -178,7 +184,7 @@ def get_my_busy_requests(ma_gv: str = Depends(require_lecturer)):
 
 @router.post("/api/user/busy-requests")
 def create_busy_request(req_data: BusyRequestCreateIn, ma_gv: str = Depends(require_lecturer)):
-    """Giảng viên gửi yêu cầu báo bận đến Quản trị viên."""
+    """Lưu đơn báo bận trước; giảng viên chọn người coi thay ở bước kế tiếp."""
     start_dt = req_data.thoi_gian_bat_dau
     end_dt = req_data.thoi_gian_ket_thuc
 
@@ -186,48 +192,29 @@ def create_busy_request(req_data: BusyRequestCreateIn, ma_gv: str = Depends(requ
         raise HTTPException(400, "Thời gian bắt đầu bận phải trước thời gian kết thúc bận.")
 
     ma_ca = (req_data.ma_ca or "").strip() or None
+    if not ma_ca:
+        raise HTTPException(400, "Vui lòng chọn ca thi cụ thể để tiếp tục nhờ giảng viên coi thay.")
 
     try:
         with get_connection() as cn:
             cur = cn.cursor()
 
             # Xác định ca thi bị ảnh hưởng
-            if ma_ca:
-                # Kiểm tra ca thi có thực sự đang được phân công cho giảng viên này không
-                cur.execute("""SELECT c.MaCa, c.NgayThi, c.TuTiet, c.DenTiet, c.PhongThi
-                               FROM dbo.PhanCongCoiThi p
-                               JOIN dbo.CaThi c ON c.MaCa = p.MaCa
-                               WHERE p.MaGV = ? AND c.MaCa = ?""", ma_gv, ma_ca)
-                slot = cur.fetchone()
-                if not slot:
-                    raise HTTPException(400, "Ca thi được chọn hiện không còn được phân công cho bạn.")
+            # Ca cần đổi phải đang được phân công cho chính giảng viên gửi đơn.
+            cur.execute("""SELECT c.MaCa, c.NgayThi, c.TuTiet, c.DenTiet, c.PhongThi
+                           FROM dbo.PhanCongCoiThi p
+                           JOIN dbo.CaThi c ON c.MaCa = p.MaCa
+                           WHERE p.MaGV = ? AND c.MaCa = ?""", ma_gv, ma_ca)
+            slot = cur.fetchone()
+            if not slot:
+                raise HTTPException(400, "Ca thi được chọn hiện không còn được phân công cho bạn.")
 
-                # Kiểm tra chống gửi trùng yêu cầu đang chờ duyệt cho cùng ca
-                cur.execute("""SELECT TOP 1 MaYeuCau FROM dbo.YeuCauBaoBan
-                               WHERE MaGV = ? AND MaCa = ? AND TrangThai = 'PENDING'""",
-                            ma_gv, ma_ca)
-                if cur.fetchone():
-                    raise HTTPException(409, "Bạn đã có một yêu cầu báo bận đang chờ xử lý cho ca thi này.")
-            else:
-                # Nếu không chọn mã ca cụ thể, tìm ca thi của giảng viên trong khoảng ngày bận
-                cur.execute("""SELECT c.MaCa, c.NgayThi, c.TuTiet, c.DenTiet
-                               FROM dbo.PhanCongCoiThi p
-                               JOIN dbo.CaThi c ON c.MaCa = p.MaCa
-                               WHERE p.MaGV = ? AND c.NgayThi >= ? AND c.NgayThi <= ?""",
-                            ma_gv, start_dt.date(), end_dt.date())
-                affected = cur.fetchall()
-                if not affected:
-                    raise HTTPException(400, "Khoảng thời gian báo bận không ảnh hưởng đến bất kỳ ca coi thi nào hiện tại của bạn. Vui lòng kiểm tra lại thời gian hoặc chọn ca thi cụ thể.")
-                # Nếu tìm thấy đúng 1 ca bị ảnh hưởng, tự động gắn mã ca
-                if len(affected) == 1:
-                    ma_ca = affected[0][0]
-                    # Kiểm tra trùng
-                    cur.execute("""SELECT TOP 1 MaYeuCau FROM dbo.YeuCauBaoBan
-                                   WHERE MaGV = ? AND MaCa = ? AND TrangThai = 'PENDING'""",
-                                ma_gv, ma_ca)
-                    if cur.fetchone():
-                        raise HTTPException(409, "Bạn đã có một yêu cầu báo bận đang chờ xử lý cho ca thi này.")
-
+            # Chặn gửi trùng yêu cầu đang chờ xử lý cho cùng ca.
+            cur.execute("""SELECT TOP 1 MaYeuCau FROM dbo.YeuCauBaoBan
+                           WHERE MaGV = ? AND MaCa = ? AND TrangThai = 'PENDING'""",
+                        ma_gv, ma_ca)
+            if cur.fetchone():
+                raise HTTPException(409, "Bạn đã có một yêu cầu báo bận đang chờ xử lý cho ca thi này.")
             # Lưu yêu cầu mới vào bảng YeuCauBaoBan
             cur.execute("""
                 INSERT INTO dbo.YeuCauBaoBan (MaGV, MaCa, ThoiGianBatDauBan, ThoiGianKetThucBan, LyDoBaoBan, GhiChuGV, TrangThai)
@@ -241,26 +228,12 @@ def create_busy_request(req_data: BusyRequestCreateIn, ma_gv: str = Depends(requ
                 raise RuntimeError("Không lấy được mã yêu cầu vừa tạo từ SQL Server.")
             ma_yeu_cau = int(new_id_row[0])
 
-            # Gửi thông báo đến Admin
-            gv_info = cur.execute("SELECT HoTen FROM dbo.GiangVien WHERE MaGV = ?", ma_gv).fetchone()
-            ten_gv = gv_info[0] if gv_info else ma_gv
-            noi_dung = f"Giảng viên {ten_gv} ({ma_gv}) đã gửi yêu cầu báo bận #{ma_yeu_cau}"
-            if ma_ca:
-                noi_dung += f" cho ca thi {ma_ca}."
-            else:
-                noi_dung += f" từ {start_dt.strftime('%d/%m/%Y %H:%M')} đến {end_dt.strftime('%d/%m/%Y %H:%M')}."
-
-            cur.execute("""
-                INSERT INTO dbo.ThongBao (MaGVNhan, DoiTuongNhan, TieuDe, NoiDung, Loai, YeuCauBaoBanID)
-                VALUES (NULL, 'Admin', N'Yêu cầu báo bận mới', ?, 'BusyRequest', ?)
-            """, noi_dung, ma_yeu_cau)
-
             cn.commit()
             return {
                 "ok": True,
                 "ma_yeu_cau": ma_yeu_cau,
                 "status": "PENDING",
-                "message": "Gửi yêu cầu báo bận thành công. Yêu cầu đang chờ Quản trị viên xem xét."
+                "message": "Đã lưu đơn báo bận. Hãy chọn giảng viên coi thay để gửi Admin duyệt."
             }
     except HTTPException:
         raise
@@ -284,10 +257,12 @@ def get_busy_request_detail(request_id: int, ma_gv: str = Depends(require_lectur
                        y.NguoiXuLy,
                        CONVERT(varchar(19), y.ThoiGianGui, 120) AS ThoiGianGui,
                        CONVERT(varchar(19), y.ThoiGianXuLy, 120) AS ThoiGianXuLy,
-                       gv.HoTen, c.NgayThi, c.Thu, c.TuTiet, c.DenTiet, c.PhongThi, c.HinhThucThi
+                       gv.HoTen, c.NgayThi, c.Thu, c.TuTiet, c.DenTiet, c.PhongThi, c.HinhThucThi,
+                       y.MaGVThayTheDeNghi, gvde.HoTen AS TenGVThayTheDeNghi
                 FROM dbo.YeuCauBaoBan y
                 JOIN dbo.GiangVien gv ON gv.MaGV = y.MaGV
                 LEFT JOIN dbo.CaThi c ON c.MaCa = y.MaCa
+                LEFT JOIN dbo.GiangVien gvde ON gvde.MaGV = y.MaGVThayTheDeNghi
                 WHERE y.MaYeuCau = ?
             """, request_id)
             row = cur.fetchone()
@@ -323,6 +298,148 @@ def get_busy_request_detail(request_id: int, ma_gv: str = Depends(require_lectur
         raise HTTPException(500, f"Không thể lấy thông tin chi tiết: {e}")
 
 
+@router.get("/api/user/busy-requests/{request_id}/candidates")
+def user_get_replacement_candidates(request_id: int, ma_gv: str = Depends(require_lecturer)):
+    """Chỉ trả về giảng viên đang đủ điều kiện nhận đúng ca trong đơn của người dùng."""
+    try:
+        with get_connection() as cn:
+            cur = cn.cursor()
+            cur.execute("""
+                SELECT MaGV, MaCa, TrangThai, MaGVThayTheDeNghi
+                FROM dbo.YeuCauBaoBan
+                WHERE MaYeuCau = ?
+            """, request_id)
+            req_row = cur.fetchone()
+            if not req_row:
+                raise HTTPException(404, "Không tìm thấy đơn báo bận.")
+            owner, ma_ca, status, nominee = req_row
+            if owner != ma_gv:
+                raise HTTPException(403, "Bạn chỉ được chọn người coi thay cho đơn của mình.")
+            if status != "PENDING":
+                raise HTTPException(409, "Đơn báo bận này đã được Admin xử lý.")
+            if not ma_ca:
+                raise HTTPException(400, "Đơn báo bận chưa gắn với ca thi cụ thể.")
+            if nominee:
+                raise HTTPException(409, "Bạn đã gửi yêu cầu cho giảng viên coi thay rồi.")
+
+            cur.execute("""
+                SELECT gv.MaGV, gv.HoTen, bm.TenBoMon,
+                       ISNULL(dm.SoCaQuyDinh, 0) AS DinhMuc,
+                       (SELECT COUNT(*) FROM dbo.PhanCongCoiThi p
+                        JOIN dbo.CaThi c ON c.MaCa = p.MaCa
+                        WHERE p.MaGV = gv.MaGV AND c.MaDot = target.MaDot) AS DaCo
+                FROM dbo.GiangVien gv
+                JOIN dbo.BoMon bm ON bm.MaBoMon = gv.MaBoMon
+                JOIN dbo.CaThi target ON target.MaCa = ?
+                LEFT JOIN dbo.DinhMucPhanCong dm ON dm.MaDot = target.MaDot AND dm.MaGV = gv.MaGV
+                WHERE gv.TrangThai = N'Đang công tác' AND gv.MaGV <> ?
+                ORDER BY gv.HoTen
+            """, ma_ca, owner)
+
+            candidates = []
+            for item in _dict_rows(cur):
+                violations = _validate_replacement_lecturer(cur, item["MaGV"], ma_ca, owner)
+                if not violations:
+                    candidates.append({
+                        "MaGV": item["MaGV"],
+                        "HoTen": item["HoTen"],
+                        "TenBoMon": item["TenBoMon"],
+                        "DinhMuc": item["DinhMuc"],
+                        "DaCo": item["DaCo"]
+                    })
+            candidates.sort(key=lambda x: (x["DaCo"], x["HoTen"]))
+            return {"candidates": candidates, "ma_ca": ma_ca}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Lỗi tìm giảng viên đủ điều kiện: {e}")
+
+
+@router.post("/api/user/busy-requests/{request_id}/request-cover")
+def user_request_cover(request_id: int, payload: BusyRequestNominateIn,
+                       ma_gv: str = Depends(require_lecturer)):
+    """Ghi nhận người được nhờ rồi thông báo cho người đó và Admin để Admin duyệt."""
+    nominee = payload.ma_gv_thay_the.strip()
+    try:
+        with get_connection() as cn:
+            cur = cn.cursor()
+            cur.execute("""
+                SELECT y.MaGV, y.MaCa, y.TrangThai, y.MaGVThayTheDeNghi, y.LyDoBaoBan, y.GhiChuGV,
+                       gv.HoTen, c.NgayThi, c.TuTiet, c.DenTiet
+                FROM dbo.YeuCauBaoBan y WITH (UPDLOCK, HOLDLOCK)
+                JOIN dbo.GiangVien gv ON gv.MaGV = y.MaGV
+                LEFT JOIN dbo.CaThi c ON c.MaCa = y.MaCa
+                WHERE y.MaYeuCau = ?
+            """, request_id)
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, "Không tìm thấy đơn báo bận.")
+            owner, ma_ca, status, existing_nominee, busy_reason, owner_note, owner_name, exam_date, start_period, end_period = row
+            if owner != ma_gv:
+                raise HTTPException(403, "Bạn chỉ được gửi yêu cầu coi thay cho đơn của mình.")
+            if status != "PENDING":
+                raise HTTPException(409, "Đơn báo bận này đã được Admin xử lý.")
+            if not ma_ca:
+                raise HTTPException(400, "Đơn báo bận chưa gắn với ca thi cụ thể.")
+            if existing_nominee:
+                raise HTTPException(409, "Đơn này đã có giảng viên được nhờ. Vui lòng tải lại trang.")
+
+            violations = _validate_replacement_lecturer(cur, nominee, ma_ca, owner)
+            if violations:
+                raise HTTPException(400, detail={
+                    "message": "Giảng viên được chọn hiện không đủ điều kiện nhận ca này.",
+                    "violations": violations
+                })
+
+            cur.execute("SELECT HoTen FROM dbo.GiangVien WHERE MaGV = ?", nominee)
+            nominee_row = cur.fetchone()
+            if not nominee_row:
+                raise HTTPException(400, "Không tìm thấy giảng viên được chọn.")
+            nominee_name = nominee_row[0]
+            date_text = exam_date.strftime("%d/%m/%Y") if exam_date else ""
+            shift_info = f"ca {ma_ca} ngày {date_text}, tiết {start_period}–{end_period}"
+
+            cur.execute("""
+                UPDATE dbo.YeuCauBaoBan
+                SET MaGVThayTheDeNghi = ?
+                WHERE MaYeuCau = ? AND MaGV = ? AND TrangThai = 'PENDING'
+                  AND MaGVThayTheDeNghi IS NULL
+            """, nominee, request_id, owner)
+            if cur.rowcount != 1:
+                raise HTTPException(409, "Đơn báo bận vừa được cập nhật. Hãy tải lại trang.")
+
+            note_info = f" Ghi chú của người gửi: {owner_note}." if owner_note else ""
+            to_nominee = (f"Giảng viên {owner_name} ({owner}) đã nhờ bạn coi thay {shift_info} "
+                          f"theo đơn báo bận #{request_id}. Lý do: {busy_reason}.{note_info} "
+                          "Yêu cầu đang chờ Admin duyệt; lịch chưa thay đổi.")
+            cur.execute("""
+                INSERT INTO dbo.ThongBao (MaGVNhan, DoiTuongNhan, TieuDe, NoiDung, Loai, YeuCauBaoBanID)
+                VALUES (?, 'Lecturer', N'Bạn được nhờ coi thay', ?, 'BusyCoverRequested', ?)
+            """, nominee, to_nominee, request_id)
+
+            to_admin = (f"Giảng viên {owner_name} ({owner}) báo bận và nhờ {nominee_name} ({nominee}) "
+                        f"coi thay {shift_info}. Lý do: {busy_reason}.{note_info} "
+                        f"Đơn #{request_id} đang chờ Admin xem xét.")
+            cur.execute("""
+                INSERT INTO dbo.ThongBao (MaGVNhan, DoiTuongNhan, TieuDe, NoiDung, Loai, YeuCauBaoBanID)
+                VALUES (NULL, 'Admin', N'Yêu cầu coi thay cần duyệt', ?, 'BusyRequest', ?)
+            """, to_admin, request_id)
+
+            cn.commit()
+            return {
+                "ok": True,
+                "status": "PENDING",
+                "ma_yeu_cau": request_id,
+                "ma_gv_thay_the_de_nghi": nominee,
+                "ten_gv_thay_the_de_nghi": nominee_name,
+                "message": f"Đã gửi yêu cầu nhờ {nominee_name} coi thay. Người đó và Admin đã được thông báo."
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Không thể gửi yêu cầu coi thay: {e}")
+
+
 # =====================================================================
 # API QUẢN TRỊ VIÊN (ADMIN)
 # =====================================================================
@@ -345,13 +462,15 @@ def admin_list_busy_requests(trang_thai: str | None = Query(default=None),
                        CONVERT(varchar(19), y.ThoiGianGui, 120) AS ThoiGianGui,
                        CONVERT(varchar(19), y.ThoiGianXuLy, 120) AS ThoiGianXuLy,
                        c.NgayThi, c.Thu, c.TuTiet, c.DenTiet, c.PhongThi, c.HinhThucThi,
+                       y.MaGVThayTheDeNghi, gvde.HoTen AS TenGVThayTheDeNghi,
                        ls.MaGVThayThe, gvtt.HoTen AS TenGVThayThe
                 FROM dbo.YeuCauBaoBan y
                 JOIN dbo.GiangVien gv ON gv.MaGV = y.MaGV
                 LEFT JOIN dbo.CaThi c ON c.MaCa = y.MaCa
                 LEFT JOIN dbo.LichSuDieuChinhLich ls ON ls.MaYeuCau = y.MaYeuCau
                 LEFT JOIN dbo.GiangVien gvtt ON gvtt.MaGV = ls.MaGVThayThe
-                WHERE 1=1
+                LEFT JOIN dbo.GiangVien gvde ON gvde.MaGV = y.MaGVThayTheDeNghi
+                WHERE (y.TrangThai <> 'PENDING' OR y.MaGVThayTheDeNghi IS NOT NULL)
             """
             params = []
             if trang_thai and trang_thai.upper() != 'ALL':
@@ -360,8 +479,8 @@ def admin_list_busy_requests(trang_thai: str | None = Query(default=None),
 
             if q and q.strip():
                 kw = f"%{q.strip()}%"
-                sql += " AND (gv.HoTen LIKE ? OR y.MaGV LIKE ? OR y.MaCa LIKE ?)"
-                params.extend([kw, kw, kw])
+                sql += " AND (gv.HoTen LIKE ? OR y.MaGV LIKE ? OR y.MaCa LIKE ? OR gvde.HoTen LIKE ? OR y.MaGVThayTheDeNghi LIKE ?)"
+                params.extend([kw, kw, kw, kw, kw])
 
             # Ưu tiên yêu cầu đang chờ xử lý lên trước
             sql += """
@@ -389,6 +508,7 @@ def admin_get_busy_request(request_id: int, admin_user: str = Depends(require_ad
             cur = cn.cursor()
             cur.execute("""
                 SELECT y.MaYeuCau, y.MaGV, gv.HoTen, gv.Email, bm.TenBoMon, k.TenKhoa,
+                       y.MaGVThayTheDeNghi, gvde.HoTen AS TenGVThayTheDeNghi,
                        y.MaCa,
                        CONVERT(varchar(19), y.ThoiGianBatDauBan, 120) AS ThoiGianBatDauBan,
                        CONVERT(varchar(19), y.ThoiGianKetThucBan, 120) AS ThoiGianKetThucBan,
@@ -402,6 +522,7 @@ def admin_get_busy_request(request_id: int, admin_user: str = Depends(require_ad
                 JOIN dbo.BoMon bm ON bm.MaBoMon = gv.MaBoMon
                 JOIN dbo.Khoa k ON k.MaKhoa = bm.MaKhoa
                 LEFT JOIN dbo.CaThi c ON c.MaCa = y.MaCa
+                LEFT JOIN dbo.GiangVien gvde ON gvde.MaGV = y.MaGVThayTheDeNghi
                 WHERE y.MaYeuCau = ?
             """, request_id)
             row = cur.fetchone()
@@ -531,7 +652,7 @@ def admin_approve_busy_request(request_id: int,
 
             # 1. Khóa và kiểm tra trạng thái hiện tại của yêu cầu (ngăn concurrency race condition)
             cur.execute("""
-                SELECT MaYeuCau, MaGV, MaCa, TrangThai
+                SELECT MaYeuCau, MaGV, MaCa, TrangThai, MaGVThayTheDeNghi
                 FROM dbo.YeuCauBaoBan WITH (UPDLOCK, HOLDLOCK)
                 WHERE MaYeuCau = ?
             """, request_id)
@@ -542,6 +663,7 @@ def admin_approve_busy_request(request_id: int,
             ma_gv_cu = req_row[1]
             ma_ca = req_row[2]
             trang_thai = req_row[3]
+            ma_gv_duoc_nho = req_row[4]
 
             if trang_thai != "PENDING":
                 raise HTTPException(409, f"Yêu cầu này đã được xử lý trước đó với trạng thái: {trang_thai}. Không thể duyệt lại.")
@@ -619,6 +741,14 @@ def admin_approve_busy_request(request_id: int,
                 VALUES (?, 'Lecturer', N'Phân công coi thi mới', ?, 'BusyApproved', ?)
             """, ma_gv_thay_the, tb_msg_moi, request_id)
 
+            if ma_gv_duoc_nho and ma_gv_duoc_nho != ma_gv_thay_the:
+                cur.execute("""
+                    INSERT INTO dbo.ThongBao (MaGVNhan, DoiTuongNhan, TieuDe, NoiDung, Loai, YeuCauBaoBanID)
+                    VALUES (?, 'Lecturer', N'Yêu cầu coi thay đã được xử lý', ?, 'BusyCoverResolved', ?)
+                """, ma_gv_duoc_nho,
+                    f"Yêu cầu #{request_id} của {ten_gv_cu} đã được Admin xử lý và phân công giảng viên khác coi thay ca {ma_ca}.",
+                    request_id)
+
             # Commit an toàn toàn bộ transaction
             cn.commit()
 
@@ -657,7 +787,7 @@ def admin_reject_busy_request(request_id: int,
 
             # Khóa và kiểm tra trạng thái
             cur.execute("""
-                SELECT MaYeuCau, MaGV, MaCa, TrangThai
+                SELECT MaYeuCau, MaGV, MaCa, TrangThai, MaGVThayTheDeNghi
                 FROM dbo.YeuCauBaoBan WITH (UPDLOCK, HOLDLOCK)
                 WHERE MaYeuCau = ?
             """, request_id)
@@ -668,6 +798,7 @@ def admin_reject_busy_request(request_id: int,
             ma_gv_cu = r[1]
             ma_ca = r[2]
             trang_thai = r[3]
+            ma_gv_duoc_nho = r[4]
 
             if trang_thai != "PENDING":
                 raise HTTPException(409, f"Yêu cầu này đã được xử lý trước đó với trạng thái: {trang_thai}. Không thể từ chối lại.")
@@ -689,6 +820,14 @@ def admin_reject_busy_request(request_id: int,
                 INSERT INTO dbo.ThongBao (MaGVNhan, DoiTuongNhan, TieuDe, NoiDung, Loai, YeuCauBaoBanID)
                 VALUES (?, 'Lecturer', N'Yêu cầu báo bận bị từ chối', ?, 'BusyRejected', ?)
             """, ma_gv_cu, noi_dung, request_id)
+
+            if ma_gv_duoc_nho:
+                cur.execute("""
+                    INSERT INTO dbo.ThongBao (MaGVNhan, DoiTuongNhan, TieuDe, NoiDung, Loai, YeuCauBaoBanID)
+                    VALUES (?, 'Lecturer', N'Yêu cầu coi thay đã bị từ chối', ?, 'BusyCoverRejected', ?)
+                """, ma_gv_duoc_nho,
+                    f"Yêu cầu coi thay ca {ma_ca or ''} trong đơn #{request_id} đã bị Admin từ chối. Lý do: {ly_do}.",
+                    request_id)
 
             cn.commit()
 

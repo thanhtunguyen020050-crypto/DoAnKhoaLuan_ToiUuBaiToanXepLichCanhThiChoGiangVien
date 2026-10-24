@@ -1,5 +1,5 @@
 /* ========= Giao diện ========= */
-function canSee(v){if(v==='home'||v==='busy_reqs')return true;const i=VIEWS.indexOf(v);return !!(S.perms[cur.role]&&S.perms[cur.role][i])}
+function canSee(v){if(v==='home')return true;const i=VIEWS.indexOf(v);return i>=0&&!!(S.perms[cur.role]&&S.perms[cur.role][i])}
 function topbar(){
   const d=new Date();
   return '<header class="topbar"><div class="tb-brand">'+logoHTML(38)+'<div><div class="uni">Trường Đại học Công Thương TP.HCM</div><h1>Hệ thống xếp lịch gác thi</h1><div class="sub">Khoa Công nghệ Thông tin &middot; Chỉ dành cho quản trị viên</div></div></div>'+
@@ -68,7 +68,7 @@ function sysView(){
 function accountsView(){
   const rows=adminAccounts.map(a=>'<tr><td><b>'+esc(a.HoTen||'')+'</b></td><td>'+esc(a.MaGV||'')+'</td><td>'+esc(a.Email||'—')+'</td><td>'+(a.IsActive?'<span class="chip ok">Đang hoạt động</span>':'<span class="chip bad">Đã khóa</span>')+'</td><td>'+(a.AccountStatusKnown===false?'<span class="chip">Chưa có trạng thái</span>':a.MustChangePassword?'<span class="chip warn">Cần đổi mật khẩu</span>':'<span class="chip ok">Đã thiết lập</span>')+'</td><td>'+esc(a.TrangThaiGiangVien||'')+'</td><td>'+esc(a.LastLoginAt?new Date(a.LastLoginAt).toLocaleString('vi-VN'):'Chưa đăng nhập')+'</td><td><button class="btn sm" data-act="reset-user-password" data-id="'+esc(a.MaGV||'')+'">Cấp mật khẩu tạm</button></td></tr>').join('');
   const body=accountsLoading?'<tr><td colspan="8" class="empty">Đang tải tài khoản từ SQL Server…</td></tr>':accountsError?'<tr><td colspan="8" class="empty">'+esc(accountsError)+'</td></tr>':rows||'<tr><td colspan="8" class="empty">Chưa có tài khoản user trong SQL Server.</td></tr>';
-  return head('Quản lý account','','<button class="btn" data-act="load-user-accounts">Tải lại từ CSDL</button>')+
+  return head('Quản lý account','','<button class="btn pri" data-act="load-user-accounts">'+IC.refresh+'Làm mới dữ liệu</button>')+
     '<div class="panel"><h2>Tài khoản user</h2><p class="sub">Danh sách bao gồm cả tài khoản đang hoạt động và đã khóa. Admin có thể cấp mật khẩu tạm nếu user quên mật khẩu.</p><div class="tw"><table><thead><tr><th>Họ tên</th><th>Mã giảng viên</th><th>Email</th><th>Hoạt động</th><th>Mật khẩu</th><th>Trạng thái giảng viên</th><th>Đăng nhập lần cuối</th><th>Thao tác</th></tr></thead><tbody>'+body+'</tbody></table></div></div>';
 }
 function busyReqsView(){
@@ -103,6 +103,7 @@ function busyReqsView(){
       '<td><b>#'+a.MaYeuCau+'</b></td>'+
       '<td><b>'+esc(a.HoTen)+'</b><br><span class="hint" style="margin:0">'+esc(a.MaGV)+'</span></td>'+
       '<td>'+caInfo+'</td>'+
+      '<td>'+(a.TenGVThayTheDeNghi||a.MaGVThayTheDeNghi?'<b>'+esc(a.TenGVThayTheDeNghi||a.MaGVThayTheDeNghi)+'</b><br><span class="hint" style="margin:0">'+esc(a.MaGVThayTheDeNghi||'')+'</span>':'<span class="muted">—</span>')+'</td>'+
       '<td><small>'+timeRange+'</small></td>'+
       '<td><b>'+esc(a.LyDoBaoBan)+'</b>'+(a.GhiChuGV ? '<br><span class="hint" style="margin:0">'+esc(a.GhiChuGV)+'</span>' : '')+'</td>'+
       '<td><span class="chip '+st[1]+'">'+esc(st[0])+'</span></td>'+
@@ -113,25 +114,29 @@ function busyReqsView(){
   }).join('');
 
   const body = busyReqsLoading
-    ? '<tr><td colspan="9" class="empty">Đang tải danh sách yêu cầu báo bận từ SQL Server…</td></tr>'
+    ? '<tr><td colspan="10" class="empty">Đang tải danh sách yêu cầu báo bận từ SQL Server…</td></tr>'
     : busyReqsError
-    ? '<tr><td colspan="9" class="empty" style="color:var(--bad)">'+esc(busyReqsError)+'</td></tr>'
-    : rows || '<tr><td colspan="9" class="empty">Không có yêu cầu báo bận nào.</td></tr>';
+    ? '<tr><td colspan="10" class="empty" style="color:var(--bad)">'+esc(busyReqsError)+'</td></tr>'
+    : rows || '<tr><td colspan="10" class="empty">Không có yêu cầu báo bận nào.</td></tr>';
+
+  const bulkApproveBtn = pendingCount && !busyReqsLoading && !busyReqsError
+    ? '<button class="btn pri" data-act="accept-all-busy-requests" title="Chấp nhận các đơn đang chờ trong danh sách hiện tại; từng đơn vẫn được kiểm tra ràng buộc">'+IC.ok+'Chấp nhận tất cả ('+pendingCount+')</button>'
+    : '';
 
   return head('Quản lý yêu cầu báo bận',
-    'Tiếp nhận yêu cầu báo bận từ giảng viên, đối chiếu lịch và tự quyết định phương án điều chỉnh ca thi.',
-    '<button class="btn" data-act="load-busy-requests">Tải lại từ CSDL</button>') +
+    'Xem đơn báo bận cùng giảng viên được nhờ coi thay, kiểm tra ràng buộc rồi quyết định cập nhật lịch.',
+    '<button class="btn" data-act="load-busy-requests">'+IC.refresh+'Làm mới dữ liệu</button>'+bulkApproveBtn) +
     '<div class="stats">'+
       '<div class="stat ic"><div class="si">'+IC.clip+'</div><div><b>'+list.length+'</b><span>Tổng số yêu cầu</span></div></div>'+
       '<div class="stat ic hot"><div class="si">'+IC.warn+'</div><div><b>'+pendingCount+'</b><span>Chờ xử lý</span></div></div>'+
-      '<div class="stat ic"><div class="si">'+IC.ok+'</div><div><b>'+approvedCount+'</b><span>Đã chấp nhận</span></div></div>'+
-      '<div class="stat ic"><div class="si">'+IC.bad+'</div><div><b>'+rejectedCount+'</b><span>Đã từ chối</span></div></div>'+
+      '<div class="stat ic done"><div class="si">'+IC.ok+'</div><div><b>'+approvedCount+'</b><span>Đã chấp nhận</span></div></div>'+ 
+      '<div class="stat ic rejected"><div class="si">'+IC.bad+'</div><div><b>'+rejectedCount+'</b><span>Đã từ chối</span></div></div>'+ 
     '</div>'+
     '<div class="panel">'+
       '<h2>Danh sách yêu cầu báo bận</h2>'+
       '<div class="tools">'+
         '<div class="grow">'+
-          '<input type="text" data-inp="busy-search" placeholder="Tìm theo tên GV, mã GV hoặc mã ca thi..." value="'+esc(busyReqSearch)+'" aria-label="Tìm yêu cầu báo bận">'+
+          '<input type="text" data-inp="busy-search" placeholder="Tìm người gửi, người được nhờ hoặc mã ca thi..." value="'+esc(busyReqSearch)+'" aria-label="Tìm yêu cầu báo bận">'+
         '</div>'+
         '<select data-chg="busy-filter" aria-label="Lọc theo trạng thái">'+
           '<option value="ALL" '+(busyReqFilter==='ALL'?'selected':'')+'>Tất cả trạng thái</option>'+
@@ -147,6 +152,7 @@ function busyReqsView(){
               '<th>Mã YC</th>'+
               '<th>Giảng viên</th>'+
               '<th>Ca thi liên quan</th>'+
+              '<th>Giảng viên được nhờ</th>'+
               '<th>Thời gian bận</th>'+
               '<th>Lý do</th>'+
               '<th>Trạng thái</th>'+
@@ -158,7 +164,7 @@ function busyReqsView(){
           '<tbody>'+body+'</tbody>'+
         '</table>'+
       '</div>'+
-      '<p class="hint">Yêu cầu ở trạng thái <b>Chờ xử lý</b> được ưu tiên hiển thị trước. Khi chấp nhận, lịch thi chính thức sẽ được cập nhật trong transaction sau khi kiểm tra toàn bộ ràng buộc RB1-RB6.</p>'+
+      '<p class="hint">Đơn chỉ xuất hiện tại đây sau khi giảng viên đã chọn người được nhờ. Yêu cầu chờ xử lý được ưu tiên; khi chấp nhận, hệ thống kiểm tra lại RB1–RB6 trước khi cập nhật lịch chính thức.</p>'+
     '</div>';
 }
 function lecRows(){
@@ -169,7 +175,7 @@ function lecRows(){
 }
 function lecView(){
   return head('Quản lý giảng viên','Danh sách giảng viên lấy trực tiếp từ SQL Server. Định mức và lịch dạy/bận được lưu trong cơ sở dữ liệu.',
-    '<button class="btn" data-act="refresh-lec">Tải lại từ CSDL</button><button class="btn" data-act="quota-all">Đặt định mức chung</button><button class="btn" data-act="pick-teach-file">'+IC.upload+'Import lịch dạy</button><button class="btn" data-act="pick-busy-file">'+IC.upload+'Import lịch bận</button><button class="btn danger" data-act="clear-all-teaching" title="Xóa toàn bộ lịch dạy của tất cả giảng viên">'+IC.x+' Xóa tất cả lịch dạy</button><button class="btn danger" data-act="clear-all-busy" title="Xóa toàn bộ lịch bận của tất cả giảng viên">'+IC.x+' Xóa tất cả lịch bận</button><button class="btn pri" data-act="add-lec">'+IC.plus+'Thêm giảng viên</button>')+
+    '<button class="btn pri" data-act="refresh-lec">'+IC.refresh+'Làm mới dữ liệu</button><button class="btn" data-act="quota-all">Đặt định mức chung</button><button class="btn" data-act="pick-teach-file">'+IC.upload+'Import lịch dạy</button><button class="btn" data-act="pick-busy-file">'+IC.upload+'Import lịch bận</button><button class="btn danger" data-act="clear-all-teaching" title="Xóa toàn bộ lịch dạy của tất cả giảng viên">'+IC.x+' Xóa tất cả lịch dạy</button><button class="btn danger" data-act="clear-all-busy" title="Xóa toàn bộ lịch bận của tất cả giảng viên">'+IC.x+' Xóa tất cả lịch bận</button><button class="btn pri" data-act="add-lec">'+IC.plus+'Thêm giảng viên</button>')+
     '<input type="file" id="fileTeach" data-chg="teach-file" accept=".xlsx,.xls,.csv,.txt,.tsv" hidden>'+
     '<input type="file" id="fileBusy" data-chg="busy-file" accept=".xlsx,.xls,.csv,.txt,.tsv" hidden>'+
     (pendBusy?'<div class="panel"><h2>Kiểm tra import lịch bận</h2><p class="sub">'+esc(pendBusy.name)+' · '+pendBusy.rows.length+' dòng hợp lệ · '+pendBusy.errors.length+' dòng lỗi</p><p class="hint"><b>Họ tên</b> được đối chiếu không phân biệt hoa/thường, dấu và khoảng trắng thừa. <b>Ngày</b> 22/1/2026 và 22/01/2026 được chuẩn hóa thành cùng ngày. “Cả ngày” sẽ tạo cả Sáng và Chiều. Nếu cùng GV/ngày/buổi có nhiều lý do, hệ thống giữ lý do có mức ưu tiên cao nhất.</p>'+importSummary(pendBusy,'lịch bận')+'<div class="tools"><button class="btn pri" data-act="apply-busy"'+(pendBusy.rows.length&&!pendBusy.errors.length?'':' disabled')+'>Nhập lịch bận</button><button class="btn" data-act="cancel-busy">Hủy</button></div></div>':'')+
@@ -222,7 +228,7 @@ function consView(){
       : '<label class="w">Mức ưu tiên <input type="range" min="1" max="10" value="'+c.w+'" data-inp="soft-w" data-id="'+s.id+'"'+(c.on?'':' disabled')+' aria-label="Mức ưu tiên"><output>'+c.w+'</output></label>';
     return '<div class="cons"><label class="sw"><input type="checkbox" data-chg="soft-on" data-id="'+s.id+'"'+(c.on?' checked':'')+' aria-label="Bật '+esc(s.name)+'"><span></span></label><div class="t"><b>'+s.name+'</b><span>'+s.desc+'</span></div>'+control+'</div>';
   }).join('');
-  return head('Quản lý ràng buộc','Xem ràng buộc cứng và cấu hình ràng buộc mềm cho thuật toán xếp lịch.','<button class="btn" data-act="reset-soft">Khôi phục mặc định</button>')+
+  return head('Quản lý ràng buộc','Xem ràng buộc cứng và cấu hình ràng buộc mềm cho thuật toán xếp lịch.','<button class="btn pri" data-act="reset-soft">Khôi phục mặc định</button>')+
     '<div class="panel"><h2>Ràng buộc cứng</h2><p class="sub">Luôn được áp dụng khi xếp tự động. Mức 1 của lịch bận là ràng buộc cứng tuyệt đối.</p>'+hard+'</div>'+
     '<div class="panel"><h2>Ràng buộc mềm</h2><p class="sub">Mức 2 và mức 3 của lịch bận được hệ thống tự chấm theo Lý do; người dùng không nhập tay mức ưu tiên.</p>'+soft+'</div>';
 }
@@ -262,7 +268,7 @@ function repView(){
       const st=q===0?(d===0?'<span class="chip ok">Không phân công</span>':'<span class="chip bad">Định mức 0 ca</span>'):d<min?'<span class="chip warn">Thiếu '+(min-d)+' ca ngoài mức cho phép</span>':d>max?'<span class="chip bad">Vượt '+(d-max)+' ca ngoài mức cho phép</span>':'<span class="chip ok">Trong khoảng '+min+'–'+max+' ca</span>';
       return '<tr><td><b>'+esc(l.name)+'</b></td><td>'+esc(l.dept)+'</td><td class="c">'+q+'</td><td class="c"><b>'+d+'</b></td><td style="min-width:120px"><div class="bar '+(!ok?'bad':'')+'"><i style="width:'+p+'%"></i></div></td><td>'+st+'</td></tr>'}).join('');
     const none=S.lecs.filter(l=>loadOf(l.id,null)===0).length,over=S.lecs.filter(l=>{const q=l.quota||0,d=loadOf(l.id,null);return q>0?(d<Math.max(0,q-1)||d>q+1):d!==0}).length,tot=S.exams.reduce((n,e)=>n+e.asg.length,0);
-    body='<div class="stats"><div class="stat"><b>'+tot+'</b><span>Lượt gác đã xếp</span></div><div class="stat"><b>'+none+'</b><span>Giảng viên chưa có ca</span></div><div class="stat"><b>'+over+'</b><span>Giảng viên ngoài khoảng định mức cho phép</span></div></div><div class="panel"><div class="tw"><table><thead><tr><th>Giảng viên</th><th>Khoa</th><th class="c">Định mức</th><th class="c">Đã gác</th><th>Tiến độ</th><th>Trạng thái</th></tr></thead><tbody>'+(rows||'<tr><td colspan="6" class="empty">Chưa có giảng viên.</td></tr>')+'</tbody></table></div></div>';
+    body='<div class="stats"><div class="stat"><b>'+tot+'</b><span>Lượt gác đã xếp</span></div><div class="stat '+(none?'hot':'done')+'"><b>'+none+'</b><span>Giảng viên chưa có ca</span></div><div class="stat '+(over?'rejected':'done')+'"><b>'+over+'</b><span>Giảng viên ngoài khoảng định mức cho phép</span></div></div><div class="panel"><div class="tw"><table><thead><tr><th>Giảng viên</th><th>Khoa</th><th class="c">Định mức</th><th class="c">Đã gác</th><th>Tiến độ</th><th>Trạng thái</th></tr></thead><tbody>'+(rows||'<tr><td colspan="6" class="empty">Chưa có giảng viên.</td></tr>')+'</tbody></table></div></div>';
   }
   if(tab6==='export'){
     const d=exportData(F.xm);

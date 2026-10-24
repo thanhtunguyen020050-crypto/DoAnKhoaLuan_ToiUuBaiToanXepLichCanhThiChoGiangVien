@@ -1,16 +1,19 @@
 """Xác thực và phân quyền bằng HMAC Token cho Giảng viên và Quản trị viên.
 Tự động bảo vệ API, xác định danh tính phía server, ngăn chặn giả mạo MaGV.
 """
-import os
 import json
 import time
 import hmac
 import base64
 import hashlib
 from fastapi import Header, HTTPException
+try:
+    from .core.config import settings
+except ImportError:
+    from core.config import settings
 
-SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "huit-gacthi-secret-key-2026-very-secure-random-bytes-512")
-TOKEN_TTL_SECONDS = 7 * 24 * 3600  # 7 ngày
+SECRET_KEY = settings.auth_secret_key
+TOKEN_TTL_SECONDS = settings.auth_token_ttl_seconds
 
 def _b64url_encode(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b'=').decode('ascii')
