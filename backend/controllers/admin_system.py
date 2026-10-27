@@ -1,16 +1,18 @@
 """FastAPI Controller: HTTP endpoint, validation and delegation to Model."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 try:
     from ..schemas.admin import GiangVienIn
+    from ..auth_utils import require_admin
 except ImportError:
     from schemas.admin import GiangVienIn
+    from auth_utils import require_admin
 
 try:
-    from ..models.admin_system import health as _model_health, list_departments as _model_list_departments, resolve_khoa as _model_resolve_khoa, list_lecturers as _model_list_lecturers, create_lecturer as _model_create_lecturer, update_lecturer as _model_update_lecturer, delete_lecturer as _model_delete_lecturer
+    from ..models.admin_system import health as _model_health, list_departments as _model_list_departments, resolve_khoa as _model_resolve_khoa, list_lecturers as _model_list_lecturers, create_lecturer as _model_create_lecturer, update_lecturer as _model_update_lecturer, delete_lecturer as _model_delete_lecturer, reactivate_lecturer as _model_reactivate_lecturer
 except ImportError:
-    from models.admin_system import health as _model_health, list_departments as _model_list_departments, resolve_khoa as _model_resolve_khoa, list_lecturers as _model_list_lecturers, create_lecturer as _model_create_lecturer, update_lecturer as _model_update_lecturer, delete_lecturer as _model_delete_lecturer
+    from models.admin_system import health as _model_health, list_departments as _model_list_departments, resolve_khoa as _model_resolve_khoa, list_lecturers as _model_list_lecturers, create_lecturer as _model_create_lecturer, update_lecturer as _model_update_lecturer, delete_lecturer as _model_delete_lecturer, reactivate_lecturer as _model_reactivate_lecturer
 
 router = APIRouter(tags=['Quản trị - hệ thống và giảng viên'])
 
@@ -41,6 +43,10 @@ def update_lecturer(ma_gv: str, x: GiangVienIn):
 @router.delete('/api/giang-vien/{ma_gv}')
 def delete_lecturer(ma_gv: str):
     return _model_delete_lecturer(ma_gv=ma_gv)
+
+@router.post('/api/giang-vien/{ma_gv}/reactivate')
+def reactivate_lecturer(ma_gv: str, admin_user: str = Depends(require_admin)):
+    return _model_reactivate_lecturer(ma_gv=ma_gv)
 
 
 try:

@@ -11,11 +11,19 @@ const A={
     try{
       const r=await API.adminNotifications();
       const items=r.items||[];localStorage.setItem('huit-admin-seen',String(Math.max(0,...items.map(x=>x.ID))));refreshAdminBell(true);
-      openModal({title:'Thông báo hệ thống',wide:true,body:items.length?'<div class="pcl">'+items.map(x=>'<div class="pc"><div class="t"><b>'+esc(x.TieuDe)+'</b><span>'+esc(x.NoiDung)+'</span><span class="hint">'+esc(x.TaoLuc||'')+'</span></div></div>').join('')+'</div>':'<p class="muted">Chưa có thông báo.</p>',foot:'<button class="btn pri" data-act="close">Đóng</button>'});
+      const noticeCards=items.map(x=>{
+        const paragraphs=String(x.NoiDung||'Không có nội dung').split(/(?<=\.)\s+/).filter(Boolean);
+        const message=paragraphs.map(p=>'<p>'+esc(p)+'</p>').join('');
+        const action=x.Loai==='BusyRequest'&&x.YeuCauBaoBanID
+          ? '<button class="btn sm pri" data-act="process-busy-request" data-id="'+esc(x.YeuCauBaoBanID)+'">Mở đơn đã được xác nhận</button>'
+          : '';
+        return '<div class="pc"><div class="t"><b>'+esc(x.TieuDe||'Thông báo')+'</b><div class="notice-message">'+message+'</div><span class="hint">'+esc(String(x.TaoLuc||'').replace('T',' '))+'</span>'+action+'</div></div>';
+      }).join('');
+      openModal({title:'Thông báo hệ thống',wide:true,body:items.length?'<div class="pcl">'+noticeCards+'</div>':'<p class="muted">Chưa có thông báo.</p>',foot:'<button class="btn pri" data-act="close">Đóng</button>'});
     }catch(e){toast('Không tải được thông báo: '+e.message)}
   },
   'change-admin-password'(){
-    openModal({title:'Đổi mật khẩu Admin',body:'<p class="muted">Mật khẩu được lưu dạng băm trong SQL Server.</p><label class="f"><span>Mật khẩu hiện tại</span><input type="password" id="adminOldPass" autocomplete="current-password"></label><label class="f"><span>Mật khẩu mới</span><input type="password" id="adminNewPass" minlength="8" maxlength="16" autocomplete="new-password"></label><label class="f"><span>Nhập lại mật khẩu mới</span><input type="password" id="adminConfirmPass" minlength="8" maxlength="16" autocomplete="new-password"></label><p class="hint">Mật khẩu mới dài 8–16 ký tự, có ít nhất một chữ in hoa (A–Z) và một ký tự đặc biệt (@, #, $...).</p><div class="err" id="adminPassErr" role="alert"></div>',foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="save-admin-password">Đổi mật khẩu</button>'});
+    openModal({title:'Đổi mật khẩu Admin',body:'<label class="f"><span>Mật khẩu hiện tại</span><input type="password" id="adminOldPass" autocomplete="current-password"></label><label class="f"><span>Mật khẩu mới</span><input type="password" id="adminNewPass" minlength="8" maxlength="16" autocomplete="new-password"></label><label class="f"><span>Nhập lại mật khẩu mới</span><input type="password" id="adminConfirmPass" minlength="8" maxlength="16" autocomplete="new-password"></label><p class="hint">Mật khẩu mới dài 8–16 ký tự, có ít nhất một chữ in hoa (A–Z) và một ký tự đặc biệt (@, #, $...).</p><div class="err" id="adminPassErr" role="alert"></div>',foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="save-admin-password">Đổi mật khẩu</button>'});
   },
   async 'save-admin-password'(){
     const oldp=$('#adminOldPass').value, newp=$('#adminNewPass').value, confirm=$('#adminConfirmPass').value, er=$('#adminPassErr');
@@ -25,16 +33,25 @@ const A={
     try{
       const r=await fetch((window.API_BASE_URL||'http://127.0.0.1:8000/api')+'/auth/admin-change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:sessionStorage.getItem('authUsername')||'admin',current_password:oldp,new_password:newp})});
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(typeof d.detail==='string'?d.detail:'Không đổi được mật khẩu.');
+      if(!r.ok)throw new Error(API.friendlyError(typeof d.detail==='string'?d.detail:(d.detail&&d.detail.message)||'Không đổi được mật khẩu.',r.status));
       closeModal();toast('Đã đổi mật khẩu Admin thành công.');
-    }catch(e){er.textContent=e.message||'Không kết nối được backend.'}
+    }catch(e){er.textContent=e.message==='Failed to fetch'?'Không thể đổi mật khẩu lúc này. Vui lòng thử lại.':(e.message||'Không thể đổi mật khẩu lúc này.')}
   },
   logout(){cur=null;sessionStorage.removeItem('authRole');sessionStorage.removeItem('authUsername');sessionStorage.removeItem('authToken');sessionStorage.removeItem('lecturerSession');sessionStorage.removeItem('mustChangePassword');location.replace('login.html')},
   go(t){view=t.dataset.v;render();window.scrollTo(0,0);if(view==='accounts')A['load-user-accounts']();if(view==='busy_reqs')A['load-busy-requests']();},
-  async 'load-user-accounts'(){accountsLoading=true;accountsError='';render();try{const r=await API.userAccounts();adminAccounts=r.items||[]}catch(e){accountsError=e.message==='Not Found'?'Backend chưa nhận API quản lý account. Hãy khởi động lại backend rồi bấm “Làm mới dữ liệu”.':(e.message||'Không tải được danh sách tài khoản.')}finally{accountsLoading=false;render()}},
+  async 'load-user-accounts'(){accountsLoading=true;accountsError='';render();try{const r=await API.userAccounts();adminAccounts=r.items||[]}catch(e){accountsError=e.message==='Not Found'?'Chức năng quản lý tài khoản chưa sẵn sàng. Vui lòng thử làm mới dữ liệu hoặc liên hệ quản trị viên.':(e.message||'Không tải được danh sách tài khoản.')}finally{accountsLoading=false;render()}},
   'reset-user-password'(t){
     const maGV=t.dataset.id, account=adminAccounts.find(a=>String(a.MaGV)===String(maGV));
     openModal({title:'Cấp mật khẩu tạm',body:'<p class="muted">Cấp mật khẩu mới cho <b>'+esc(account&&account.HoTen||maGV)+'</b> ('+esc(maGV)+'). Mật khẩu hiện tại sẽ mất hiệu lực.</p><label class="f"><span>Nhập lại mật khẩu Admin để xác nhận</span><input type="password" id="resetAdminPassword" autocomplete="current-password" required></label><div class="err" id="resetPasswordError" role="alert"></div>',foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="confirm-reset-user-password" data-id="'+esc(maGV)+'">Cấp mật khẩu tạm</button>'});
+  },
+  async 'reactivate-lecturer'(t){
+    const maGV=t.dataset.id, account=adminAccounts.find(a=>String(a.MaGV)===String(maGV));
+    if(!account||!confirm('Khôi phục trạng thái công tác cho '+(account.HoTen||maGV)+'? Tài khoản đăng nhập cũng sẽ được mở lại.'))return;
+    try{
+      await API.reactivateLecturer(maGV);
+      await A['load-user-accounts']();
+      toast('Đã khôi phục trạng thái công tác và mở lại tài khoản.');
+    }catch(e){toast(e.message||'Không thể khôi phục tài khoản.')}
   },
   async 'confirm-reset-user-password'(t){
     const maGV=t.dataset.id, error=$('#resetPasswordError'), password=$('#resetAdminPassword').value;
@@ -59,6 +76,7 @@ const A={
       busyReqsError=e.message||'Không tải được danh sách yêu cầu báo bận.';
     }finally{
       busyReqsLoading=false;render();
+      refreshAdminBusyCount();
     }
   },
   async 'accept-all-busy-requests'(t){
@@ -96,6 +114,7 @@ const A={
     }
 
     await A['load-busy-requests']();
+    refreshAdminBusyCount(true);
     if(approved.length)await bootSQL();
 
     const failedHtml=failed.length
@@ -120,8 +139,10 @@ const A={
         API.adminBusyRequestCandidates(id)
       ]);
       const cands=candResp.candidates||[];
-      const eligibleCands=cands.filter(c=>c.HopLe);
-      const excludedCands=cands.length-eligibleCands.length;
+      const eligibleCands=cands.filter(c=>c.HopLe && String(c.MaGV)===String(detail.MaGVThayTheDeNghi));
+      const responseTime=detail.ThoiGianPhanHoiThayThe
+        ? String(detail.ThoiGianPhanHoiThayThe).replace('T',' ')
+        : '';
       window.__CURRENT_BUSY_DETAIL = detail;
       window.__CURRENT_BUSY_CANDIDATES = cands;
 
@@ -129,10 +150,10 @@ const A={
         const quotaInfo = `Đã có ${c.DaCo}/${c.DinhMuc} ca`;
 
         return `<label class="busy-candidate" data-q="${esc((c.HoTen+' '+c.MaGV+' '+c.TenBoMon).toLowerCase())}">
-          <input type="radio" name="candRadio" value="${esc(c.MaGV)}" data-name="${esc(c.HoTen)}" data-valid="1" ${c.MaGV===detail.MaGVThayTheDeNghi?'checked':''}>
+          <input type="radio" name="candRadio" value="${esc(c.MaGV)}" data-name="${esc(c.HoTen)}" data-valid="1" ${String(c.MaGV)===String(detail.MaGVThayTheDeNghi)?'checked':''}>
           <div class="busy-candidate-info">
             <div class="busy-candidate-title">
-              <b>${esc(c.HoTen)} (${esc(c.MaGV)})${c.MaGV===detail.MaGVThayTheDeNghi?' <span class="chip warn">Được giảng viên nhờ</span>':''}</b>
+              <b>${esc(c.HoTen)} (${esc(c.MaGV)})${String(c.MaGV)===String(detail.MaGVThayTheDeNghi)?' <span class="chip warn">Được giảng viên nhờ</span>':''}</b>
               <span class="chip ok">Đủ điều kiện</span>
             </div>
             <div class="muted busy-candidate-meta">${esc(c.TenBoMon)} · ${quotaInfo}</div>
@@ -152,8 +173,9 @@ const A={
                 <div><b>Giảng viên:</b> ${esc(detail.HoTen)} (${esc(detail.MaGV)})</div>
                 <div><b>Đơn vị:</b> ${esc(detail.TenBoMon)}, ${esc(detail.TenKhoa)}</div>
                 <div style="margin-top:6px"><b>Giảng viên được nhờ:</b> ${esc(detail.TenGVThayTheDeNghi||'Chưa có')} ${detail.MaGVThayTheDeNghi?'('+esc(detail.MaGVThayTheDeNghi)+')':''}</div>
+                <div style="margin-top:6px"><b>Phản hồi:</b> <span class="chip ${detail.TrangThaiXacNhanThayThe==='ACCEPTED'?'ok':'warn'}">${detail.TrangThaiXacNhanThayThe==='ACCEPTED'?'Đã đồng ý':'Chưa xác nhận'}</span>${responseTime?`<br><small class="muted">Phản hồi lúc: ${esc(responseTime)}</small>`:''}</div>
                 <div style="margin-top:6px"><b>Ca thi liên quan:</b> <span class="chip warn">${esc(detail.MaCa||'Chưa gán ca')}</span></div>
-                ${detail.NgayThi ? `<div><b>Thời gian ca:</b> ${fmtD(detail.NgayThi)} · Tiết ${detail.TuTiet}–${detail.DenTiet} (Phòng: ${esc(detail.PhongThi||'—')})</div>` : ''}
+                ${detail.NgayThi ? `<div><b>Thời gian ca:</b> ${fmtD(detail.NgayThi)} · ${esc(detail.Buoi||'')} · Tiết ${detail.TuTiet}–${detail.DenTiet} · ${esc(detail.HinhThucThi||'')} (Phòng: ${esc(detail.PhongThi||'—')})</div>` : ''}
                 <div style="margin-top:6px"><b>Khoảng thời gian bận:</b><br><small>${esc(detail.ThoiGianBatDauBan ? detail.ThoiGianBatDauBan.replace('T',' ') : '')} → ${esc(detail.ThoiGianKetThucBan ? detail.ThoiGianKetThucBan.replace('T',' ') : '')}</small></div>
                 <div style="margin-top:6px"><b>Lý do báo bận:</b><br><b style="color:var(--bad)">${esc(detail.LyDoBaoBan)}</b></div>
                 ${detail.GhiChuGV ? `<div style="margin-top:6px"><b>Ghi chú:</b> <i>${esc(detail.GhiChuGV)}</i></div>` : ''}
@@ -170,11 +192,9 @@ const A={
             </div>
 
             <div class="busy-request-options">
-              <h4 style="margin-top:0">3. Chọn phương án phân công giảng viên thay thế</h4>
-              <p class="sub" style="margin-bottom:8px">Có ${eligibleCands.length} giảng viên đủ điều kiện theo RB1–RB6 cho ca <b>${esc(detail.MaCa)}</b>. Người được giảng viên nhờ đã được chọn sẵn.${excludedCands?` ${excludedCands} người không đạt điều kiện đã được ẩn.`:''}</p>
+              <h4 style="margin-top:0">3. Xem phương án giảng viên thay thế</h4>
+              <p class="sub" style="margin-bottom:8px">Hệ thống đã kiểm tra RB1–RB6 cho ca <b>${esc(detail.MaCa)}</b>. Admin duyệt người được nhờ đã đồng ý để cập nhật lịch.</p>
               
-              <input type="search" id="candQuickSearch" placeholder="Tìm theo tên hoặc mã giảng viên thay thế..." style="width:100%;margin-bottom:8px">
-
               <div id="candContainer" class="busy-request-candidates">
                 ${candRowsHtml}
               </div>
@@ -191,19 +211,10 @@ const A={
         foot: `
           <button class="btn danger" data-act="open-reject-busy-modal" data-id="${detail.MaYeuCau}">${IC.x} Từ chối yêu cầu</button>
           <button class="btn" data-act="close">Đóng</button>
-          <button class="btn pri" data-act="do-approve-busy" data-id="${detail.MaYeuCau}">${IC.ok} Chấp nhận & Cập nhật lịch</button>
+          <button class="btn pri" data-act="do-approve-busy" data-id="${detail.MaYeuCau}">${IC.ok} Chấp nhận và cập nhật lịch</button>
         `
       });
 
-      const searchBox = $('#candQuickSearch');
-      if (searchBox) {
-        searchBox.oninput = e => {
-          const q = e.target.value.trim().toLowerCase();
-          document.querySelectorAll('#candContainer [data-q]').forEach(el => {
-            el.hidden = q && !el.dataset.q.includes(q);
-          });
-        };
-      }
     }catch(err){
       toast(err.message);
       closeModal();
@@ -227,7 +238,7 @@ const A={
         return;
       }
     } else {
-      if (!confirm(`Xác nhận phân công giảng viên ${gvName} (${maGV}) coi thay ca thi và cập nhật lịch chính thức trong SQL Server?`)) {
+      if (!confirm(`Xác nhận phân công giảng viên ${gvName} (${maGV}) coi thay ca thi và cập nhật lịch chính thức?`)) {
         return;
       }
     }
@@ -239,10 +250,11 @@ const A={
       closeModal();
       toast(res.message || 'Duyệt yêu cầu và cập nhật lịch thành công!');
       A['load-busy-requests']();
+      refreshAdminBusyCount(true);
       bootSQL();
     } catch (err) {
       t.disabled = false;
-      t.textContent = 'Chấp nhận & Cập nhật lịch';
+      t.textContent = 'Chấp nhận và cập nhật lịch';
       if (errEl) errEl.textContent = err.message;
       else toast(err.message);
     }
@@ -289,6 +301,7 @@ const A={
       closeModal();
       toast(res.message || 'Đã từ chối yêu cầu báo bận. Lịch được giữ nguyên.');
       A['load-busy-requests']();
+      refreshAdminBusyCount(true);
     } catch (err) {
       t.disabled = false;
       t.textContent = 'Xác nhận từ chối';
@@ -300,7 +313,7 @@ const A={
     const id = t.dataset.id;
     try {
       const d = await API.adminBusyRequestDetail(id);
-      const reqStatusMap = {'PENDING': ['Chờ Admin xử lý', 'warn'], 'APPROVED': ['Đã chấp nhận', 'ok'], 'REJECTED': ['Đã từ chối', 'bad']};
+      const reqStatusMap = {'PENDING': ['Chờ Admin xử lý', 'warn'], 'APPROVED': ['Đã chấp nhận', 'ok'], 'REJECTED': ['Đã từ chối', 'bad'], 'WITHDRAWN': ['Người gửi đã rút đơn', '']};
       const st = reqStatusMap[d.TrangThai] || [d.TrangThai, ''];
       
       let historyHtml = '';
@@ -356,7 +369,7 @@ const A={
           <div style="margin-top:16px;padding:12px;border-radius:8px;background:var(--sub)">
             <b>Kết quả xử lý:</b><br>
             ${d.TrangThai === 'APPROVED' ? `<div style="color:var(--ok);margin-top:6px">
-              <b>ĐÃ DUYỆT & CẬP NHẬT LỊCH:</b><br>
+              <b>ĐÃ DUYỆT VÀ CẬP NHẬT LỊCH:</b><br>
               Người duyệt: <b>${esc(d.NguoiXuLy||'Admin')}</b> lúc ${esc(d.ThoiGianXuLy?d.ThoiGianXuLy.replace('T',' '):'')}<br>
               ${d.GhiChuAdmin ? `Ghi chú Admin: <i>${esc(d.GhiChuAdmin)}</i>` : ''}
             </div>` : ''}
@@ -366,6 +379,7 @@ const A={
               Người xử lý: <b>${esc(d.NguoiXuLy||'Admin')}</b> lúc ${esc(d.ThoiGianXuLy?d.ThoiGianXuLy.replace('T',' '):'')}<br>
               ${d.GhiChuAdmin ? `Ghi chú Admin: <i>${esc(d.GhiChuAdmin)}</i>` : ''}
             </div>` : ''}
+            ${d.TrangThai === 'WITHDRAWN' ? `<div class="muted" style="margin-top:6px">Người gửi đã rút đơn. Lịch coi thi vẫn giữ nguyên.</div>` : ''}
           </div>
 
           ${historyHtml}
@@ -402,29 +416,41 @@ const A={
   },
   'edit-lec'(t){lecForm(lec(t.dataset.id))},
   async 'save-lec'(t){
-    const n=$('#fn').value.trim(),d=$('#fd').value.trim(),bm=$('#fbm').value,q=parseInt($('#fq').value,10),er=$('#ferr');
+    const n=$('#fn').value.trim(),d=$('#fd').value.trim(),bm=$('#fbm').value,email=$('#femail').value.trim(),q=parseInt($('#fq').value,10),er=$('#ferr');
     if(!n||!d){er.textContent='Nhập đủ họ tên và khoa.';return}
+    if(email&&!$('#femail').checkValidity()){er.textContent='Email chưa đúng định dạng.';return}
     if(isNaN(q)||q<0||q>100){er.textContent='Định mức phải là số từ 0 đến 100 (%).';return}
+    if(t.disabled)return;
+    const saveLabel=t.textContent;
+    t.disabled=true;t.setAttribute('aria-busy','true');t.textContent='Đang lưu…';er.textContent='';
+    let newAccount=null;
     try{
       const dot=window.__MA_DOT||null;
       if(t.dataset.id){
-        const l=lec(t.dataset.id); await API.updateLecturer(l.id,{ho_ten:n,don_vi:'CNTT',ma_bo_mon:bm,ty_le:q,ma_dot:dot}); l.name=n;l.dept=d;l.pct=q;
-        toast('Đã cập nhật giảng viên trên SQL Server.');
+        const l=lec(t.dataset.id); await API.updateLecturer(l.id,{ho_ten:n,don_vi:'CNTT',ma_bo_mon:bm,email:email||null,ty_le:q,ma_dot:dot}); l.name=n;l.dept=d;l.email=email;l.pct=q;
+        toast('Đã cập nhật thông tin giảng viên.');
       }else{
-        const r=await API.createLecturer({ho_ten:n,don_vi:'CNTT',ma_bo_mon:bm,ty_le:q,ma_dot:dot});
-        S.lecs.push({id:r.ma_gv,name:n,dept:d,pct:q,quota:0,busy:[],teach:[]});
-        toast('Đã thêm giảng viên vào SQL Server.');
+        const r=await API.createLecturer({ho_ten:n,don_vi:'CNTT',ma_bo_mon:bm,email:email||null,ty_le:q,ma_dot:dot});
+        S.lecs.push({id:r.ma_gv,name:n,dept:d,email:email,pct:q,quota:0,busy:[],teach:[]});
+        newAccount={maGV:r.ma_gv,password:r.initial_password||'1'};
+        toast('Đã thêm giảng viên.');
       }
-      closeModal();await refreshLecturers(false);render();
-    }catch(e){er.textContent=e.message}
+      closeModal();
+      if(newAccount)openModal({title:'Đã tạo tài khoản giảng viên',body:'<p>Giảng viên có thể đăng nhập bằng tài khoản bên dưới. Mật khẩu tạm chỉ hiển thị lần này.</p><label class="f"><span>Tài khoản / Mã giảng viên</span><input type="text" readonly value="'+esc(newAccount.maGV)+'" onclick="this.select()"></label><label class="f"><span>Mật khẩu tạm</span><input type="text" readonly value="'+esc(newAccount.password)+'" onclick="this.select()"></label><p class="hint">Giảng viên cần đổi mật khẩu ngay lần đăng nhập đầu tiên. Nếu đóng hộp thoại mà chưa lưu mật khẩu, hãy dùng “Cấp mật khẩu tạm” trong Quản lý tài khoản.</p>',foot:'<button class="btn pri" data-act="close">Đóng</button>'});
+      await refreshLecturers(false);render();
+    }catch(e){t.disabled=false;t.removeAttribute('aria-busy');t.textContent=saveLabel;er.textContent=e.message}
   },
   async 'del-lec'(t){
     const l=lec(t.dataset.id);if(!l)return;
-    if(!confirm('Ngừng công tác giảng viên '+l.name+' trên SQL Server?'))return;
-    try{await API.deleteLecturer(l.id);S.exams.forEach(e=>{e.asg=e.asg.filter(a=>String(a.l)!==String(l.id))});S.lecs=S.lecs.filter(x=>x!==l);render();toast('Đã cập nhật trạng thái giảng viên trên SQL Server.')}catch(e){toast(e.message)}
+    if(!confirm('Ngừng hoạt động giảng viên '+l.name+'?'))return;
+    try{await API.deleteLecturer(l.id);S.exams.forEach(e=>{e.asg=e.asg.filter(a=>String(a.l)!==String(l.id))});S.lecs=S.lecs.filter(x=>x!==l);render();toast('Đã cập nhật trạng thái giảng viên.')}catch(e){toast(e.message)}
   },
-  'quota-all'(){openModal({title:'Đặt định mức chung',body:'<p class="muted" style="margin-bottom:10px">Áp dụng cho '+(F.ld?'giảng viên khoa '+esc(F.ld):'tất cả giảng viên')+' đang hiển thị.</p><label class="f"><span>Định mức (%)</span><input type="number" id="qa" min="0" max="100" value="100"></label>',foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="do-quota-all">Áp dụng</button>'})},
-  async 'do-quota-all'(){const q=parseInt($('#qa').value,10);if(isNaN(q)||q<0||q>100)return;try{const dot=window.__MA_DOT;if(!dot){toast('Chưa có đợt thi để lưu định mức.');return}let maKhoa=null;if(F.ld)maKhoa=await API.resolveKhoa(F.ld);const r=await API.setCommonQuota(dot,q,maKhoa);closeModal();await refreshLecturers(false);render();toast('Đã lưu định mức chung '+q+'% vào SQL Server. Tổng định mức: '+r.TongDinhMuc+'/'+r.TongNhuCau+' ca.')}catch(e){toast(e.message)}},
+  'quota-all'(){
+    const eligible=S.lecs.filter(l=>inDot(l)&&(!F.ld||l.dept===F.ld));
+    const scope=F.ld?'các giảng viên đã tham gia thuộc khoa '+esc(F.ld):'các giảng viên đã chọn tham gia đợt '+esc(window.__MA_DOT||'');
+    openModal({title:'Đặt định mức chung',body:'<p class="muted" style="margin-bottom:10px">Chỉ cập nhật định mức cho '+scope+' ('+eligible.length+' người). Không thêm giảng viên ngoài danh sách tham gia.</p><label class="f"><span>Định mức (%)</span><input type="number" id="qa" min="0" max="100" value="100"></label>',foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="do-quota-all"'+(eligible.length?'':' disabled')+'>Áp dụng</button>'})
+  },
+  async 'do-quota-all'(){const q=parseInt($('#qa').value,10);if(isNaN(q)||q<0||q>100)return;try{const dot=window.__MA_DOT;if(!dot){toast('Chưa có đợt thi để lưu định mức.');return}let maKhoa=null;if(F.ld)maKhoa=await API.resolveKhoa(F.ld);const r=await API.setCommonQuota(dot,q,maKhoa);closeModal();await refreshLecturers(false);render();toast('Đã áp dụng '+q+'% cho '+(r.GiangVienCapNhat||0)+' giảng viên tham gia. Tổng định mức: '+r.TongDinhMuc+'/'+r.TongNhuCau+' ca.')}catch(e){toast(e.message)}},
   busy(t){
     const l=lec(t.dataset.id),dates=[...new Set(S.exams.map(e=>e.date))].sort();
     if(!dates.length){openModal({title:'Lịch dạy và lịch bận',body:'<p>Chưa có lịch thi nên chưa có ngày để khai báo lịch bận. Hãy import lịch thi ở mục 3 trước.</p>',foot:'<button class="btn" data-act="close">Đóng</button>'});return}
@@ -436,7 +462,7 @@ const A={
     const l=lec(t.dataset.id);if(!l)return;
     const busy=[...document.querySelectorAll('#modal .bk:checked')].map(x=>x.value);
     const items=busy.map(v=>{const [d,b]=v.split('|');return {ngay_ban:d,tu_tiet:b==='S'?1:7,den_tiet:b==='S'?6:12,ly_do:null}});
-    try{await API.replaceBusy(l.id,items);await refreshLecturers(false);closeModal();render();toast('Đã lưu lịch bận vào SQL Server. Lịch dạy import không bị thay đổi. Lịch bận nhập tay được xử lý ở mức ưu tiên thấp nhất.')}catch(e){toast(e.message)}
+    try{await API.replaceBusy(l.id,items);await refreshLecturers(false);closeModal();render();toast('Đã lưu lịch bận. Lịch dạy không thay đổi; lịch bận khai báo tại đây được ưu tiên sau.')}catch(e){toast(e.message)}
   },
   'clear-schedule'(t){
     const l=lec(t.dataset.id);if(!l)return;
@@ -447,13 +473,13 @@ const A={
     const cardTeach='<label style="'+cardStyle(hasTeach,hasTeach)+'" id="cardTeach">'
       +'<span style="flex:none;width:40px;height:40px;border-radius:9px;background:'+(hasTeach?'var(--badbg)':'var(--sky)')+';color:'+(hasTeach?'var(--bad)':'var(--muted)')+';display:flex;align-items:center;justify-content:center">'+icoBook+'</span>'
       +'<span style="flex:1;min-width:0"><span style="display:block;font-weight:600;font-size:14px">Lịch dạy</span>'
-      +'<span style="display:block;font-size:12.5px;color:var(--muted);margin-top:1px">'+(hasTeach?'<b style="color:var(--bad)">'+l.teach.length+' ca dạy</b> sẽ bị xóa khỏi LichDayGV':'Chưa có lịch dạy để xóa')+'</span></span>'
+      +'<span style="display:block;font-size:12.5px;color:var(--muted);margin-top:1px">'+(hasTeach?'<b style="color:var(--bad)">'+l.teach.length+' ca dạy</b> sẽ bị xóa':'Chưa có lịch dạy để xóa')+'</span></span>'
       +'<input type="checkbox" id="clrTeach" style="width:18px;height:18px;accent-color:var(--bad);flex:none"'+(hasTeach?' checked':' disabled')+'>'
       +'</label>';
     const cardBusy='<label style="'+cardStyle(hasBusy,hasBusy)+'" id="cardBusy">'
       +'<span style="flex:none;width:40px;height:40px;border-radius:9px;background:'+(hasBusy?'var(--badbg)':'var(--sky)')+';color:'+(hasBusy?'var(--bad)':'var(--muted)')+';display:flex;align-items:center;justify-content:center">'+icoBan+'</span>'
       +'<span style="flex:1;min-width:0"><span style="display:block;font-weight:600;font-size:14px">Lịch bận</span>'
-      +'<span style="display:block;font-size:12.5px;color:var(--muted);margin-top:1px">'+(hasBusy?'<b style="color:var(--bad)">'+l.busy.length+' buổi bận</b> sẽ bị xóa khỏi LichBanGV':'Chưa có lịch bận để xóa')+'</span></span>'
+      +'<span style="display:block;font-size:12.5px;color:var(--muted);margin-top:1px">'+(hasBusy?'<b style="color:var(--bad)">'+l.busy.length+' buổi bận</b> sẽ bị xóa':'Chưa có lịch bận để xóa')+'</span></span>'
       +'<input type="checkbox" id="clrBusy" style="width:18px;height:18px;accent-color:var(--bad);flex:none"'+(hasBusy?' checked':' disabled')+'>'
       +'</label>';
     const warn='<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:var(--warnbg);color:var(--warn);font-size:13px;margin-top:14px">'
@@ -483,7 +509,7 @@ const A={
       if(doBusy){try{await API.replaceBusy(l.id,[])}catch(e){errs.push('Lịch bận: '+e.message)}}
       await refreshLecturers(false);closeModal();render();
       if(errs.length)toast('Xóa một phần. Lỗi: '+errs.join('; '));
-      else toast('Đã xóa '+what+' của '+l.name+' khỏi SQL Server.');
+      else toast('Đã xóa '+what+' của '+l.name+'.');
     }catch(e){toast(e.message)}
   },
 
@@ -492,7 +518,7 @@ const A={
     if(!total){toast('Không có lịch dạy nào để xóa.');return}
     openModal({
       title:'Xóa toàn bộ lịch dạy',
-      body:'<p style="margin-bottom:14px">Thao tác này sẽ xóa <b>'+total+' ca dạy</b> của <b>tất cả '+S.lecs.filter(l=>l.teach&&l.teach.length).length+' giảng viên</b> khỏi bảng <b>LichDayGV</b> trong SQL Server.</p>'
+      body:'<p style="margin-bottom:14px">Thao tác này sẽ xóa <b>'+total+' ca dạy</b> của <b>tất cả '+S.lecs.filter(l=>l.teach&&l.teach.length).length+' giảng viên</b>.</p>'
         +'<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:var(--badbg);color:var(--bad);font-size:13px">'
         +'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
         +'<span>Dữ liệu bị xóa <b>không thể khôi phục</b>. Toàn bộ lịch dạy của mọi giảng viên sẽ bị xóa vĩnh viễn.</span></div>'
@@ -507,7 +533,7 @@ const A={
     try{
       const r=await API.clearAllTeaching();
       await refreshLecturers(false);closeModal();render();
-      toast('Đã xóa '+r.deleted+' ca dạy khỏi LichDayGV trên SQL Server.');
+      toast('Đã xóa '+r.deleted+' ca dạy.');
     }catch(e){const er=$('#clearAllTeachErr');if(er)er.textContent=e.message||'Không xóa được lịch dạy.'}
   },
   'clear-all-busy'(){
@@ -515,7 +541,7 @@ const A={
     if(!total){toast('Không có lịch bận nào để xóa.');return}
     openModal({
       title:'Xóa toàn bộ lịch bận',
-      body:'<p style="margin-bottom:14px">Thao tác này sẽ xóa <b>'+total+' buổi bận</b> của <b>tất cả '+S.lecs.filter(l=>l.busy&&l.busy.length).length+' giảng viên</b> khỏi bảng <b>LichBanGV</b> trong SQL Server.</p>'
+      body:'<p style="margin-bottom:14px">Thao tác này sẽ xóa <b>'+total+' buổi bận</b> của <b>tất cả '+S.lecs.filter(l=>l.busy&&l.busy.length).length+' giảng viên</b>.</p>'
         +'<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:var(--warnbg);color:var(--warn);font-size:13px">'
         +'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
         +'<span>Dữ liệu bị xóa <b>không thể khôi phục</b>. Toàn bộ lịch bận của mọi giảng viên sẽ bị xóa vĩnh viễn.</span></div>'
@@ -530,7 +556,7 @@ const A={
     try{
       const r=await API.clearAllBusy();
       await refreshLecturers(false);closeModal();render();
-      toast('Đã xóa '+r.deleted+' buổi bận khỏi LichBanGV trên SQL Server.');
+      toast('Đã xóa '+r.deleted+' buổi bận.');
     }catch(e){const er=$('#clearAllBusyErr');if(er)er.textContent=e.message||'Không xóa được lịch bận.'}
   },
 
@@ -541,7 +567,7 @@ const A={
       const r=await API.importBusy(pendBusy.rows,pendBusy.name);
       await refreshLecturers(false);
       const n=pendBusy.rows.length;pendBusy=null;render();
-      toast('Đã import '+n+' dòng lịch bận, khớp '+r.teachers+' giảng viên vào LichBanGV. Ngày được chuẩn hóa và tên không phân biệt hoa/thường.');
+      toast('Đã nhập '+n+' dòng lịch bận cho '+r.teachers+' giảng viên.');
     }catch(e){
       const d=e&&e.detail;
       const errs=d&&d.errors?d.errors:[{line:'-',msg:e.message||String(e)}];
@@ -556,7 +582,7 @@ const A={
     try{
       const r=await API.importTeaching(pendTeach.rows.map(x=>({name:x.name,date:x.date,start:x.start,end:x.end,line:x.line})),pendTeach.name);
       await refreshLecturers(false);
-      const n=pendTeach.rows.length;pendTeach=null;render();toast('Đã import '+n+' ca lịch dạy vào bảng LichDayGV cho '+r.teachers+' giảng viên. Không tạo giảng viên mới và không ghi vào LichBanGV.');
+      const n=pendTeach.rows.length;pendTeach=null;render();toast('Đã nhập '+n+' ca lịch dạy cho '+r.teachers+' giảng viên.');
     }catch(e){
       pendTeach.errors=[...(pendTeach.errors||[]),{line:'-',msg:e.message||String(e)}]; render(); toast(e.message||String(e));
     }
@@ -571,7 +597,7 @@ const A={
     try{
       const payload={ma_dot:old?old.ma_dot:null,hoc_ky:hk,nam_hoc:yh,ngay_thi:date,tu_tiet:slot.start,den_tiet:slot.end,hinh_thuc_thi:kind==='TL'?'Tự luận':'Lý thuyết',so_gv_can_cap:need};
       if(old) await API.updateExam(old.ma_ca,payload); else await API.createExam(payload);
-      closeModal();await refreshExamData(false);render();toast((old?'Đã cập nhật':'Đã lưu')+' ca thi vào SQL Server.');
+      closeModal();await refreshExamData(false);render();toast((old?'Đã cập nhật':'Đã lưu')+' ca thi.');
     }catch(e){er.textContent=e.message}
   },
   'clear-all-exams'(){
@@ -579,7 +605,7 @@ const A={
     const total=S.exams.length, asg=S.exams.reduce((n,e)=>n+(e.asg?e.asg.length:0),0);
     openModal({
       title:'Xóa toàn bộ ca thi',
-      body:'<p style="margin-bottom:14px">Thao tác này sẽ xóa <b>'+total+' ca thi</b>'+(asg?' và <b>'+asg+' lượt phân công</b> liên quan':'')+' khỏi bảng <b>CaThi</b> trong SQL Server.</p>'
+      body:'<p style="margin-bottom:14px">Thao tác này sẽ xóa <b>'+total+' ca thi</b>'+(asg?' và <b>'+asg+' lượt phân công</b> liên quan':'')+'.</p>'
         +'<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:var(--badbg);color:var(--bad);font-size:13px">'
         +'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
         +'<span>Dữ liệu bị xóa <b>không thể khôi phục</b>. Toàn bộ ca thi, phân công, yêu cầu đổi ca và lịch sử đổi ca liên quan sẽ bị xóa. Yêu cầu báo bận vẫn được giữ nhưng không còn gắn với ca đã xóa.</span></div>'
@@ -594,17 +620,17 @@ const A={
     try{
       const r=await API.clearAllExams();
       await refreshExamData(false);closeModal();render();
-      toast('Đã xóa '+r.deleted+' ca thi khỏi SQL Server.');
+      toast('Đã xóa '+r.deleted+' ca thi.');
     }catch(e){const er=$('#clearAllExamsErr');if(er)er.textContent=e.message||'Không xóa được ca thi.'}
   },
-  async 'del-exam'(t){const e=exm(+t.dataset.id);if(!e)return;if(!confirm('Xóa ca thi này khỏi SQL Server? Phân công, yêu cầu đổi ca và lịch sử đổi ca liên quan cũng sẽ bị xóa. Yêu cầu báo bận được giữ lại nhưng bỏ liên kết với ca này.'))return;try{await API.deleteExam(e.ma_ca);await refreshExamData(false);toast('Đã xóa ca thi khỏi SQL Server.')}catch(x){toast(x.message)}},
+  async 'del-exam'(t){const e=exm(+t.dataset.id);if(!e)return;if(!confirm('Xóa ca thi này? Phân công, yêu cầu đổi ca và lịch sử đổi ca liên quan cũng sẽ bị xóa. Yêu cầu báo bận được giữ lại nhưng bỏ liên kết với ca này.'))return;try{await API.deleteExam(e.ma_ca);await refreshExamData(false);toast('Đã xóa ca thi.')}catch(x){toast(x.message)}},
   'edit-exam'(t){examForm(exm(+t.dataset.id))},
   async 'do-import-exam'(){
     if(!pend||!pend.rows.length)return;
     try{
       const hk=((S.dots||[])[0]||{}).HocKy||'HK1',yh=((S.dots||[])[0]||{}).NamHoc||((new Date().getFullYear())+'-'+(new Date().getFullYear()+1));
       for(const r of pend.rows){const s=parsePeriod(r.period);await API.createExam({hoc_ky:hk,nam_hoc:yh,ngay_thi:r.date,tu_tiet:s.start,den_tiet:s.end,hinh_thuc_thi:r.kind==='TL'?'Tự luận':'Lý thuyết',so_gv_can_cap:r.need})}
-      pend=null;await refreshExamData(false);render();toast('Đã nhập toàn bộ ca thi vào SQL Server.');
+      pend=null;await refreshExamData(false);render();toast('Đã nhập toàn bộ ca thi.');
     }catch(e){toast(e.message)}
   },
   'cancel-import-exam'(){pend=null;render()},
@@ -621,9 +647,32 @@ const A={
     if(failures.length){toast('Chưa lưu được: còn vi phạm ràng buộc cứng — '+failures.map(x=>x.name+' '+x.pct+'%').join(', ')+'. Hãy xếp lại hoặc sửa phân công trước.');return}
     try{await persistAssignments();toast('Đã lưu thành công, giảng viên có thể xem lịch.')}catch(e){toast('Không lưu được phân công: '+(e.message||e))}
   },
+  async 'unpublish-assignments'(){
+    const maDot=S.exams.find(e=>e.ma_dot)?.ma_dot||window.__MA_DOT;
+    if(!maDot){toast('Chưa xác định được đợt thi cần gỡ lịch.');return}
+    if(!confirm('Thu hồi toàn bộ lịch đã công bố của đợt '+maDot+' khỏi lịch giảng viên? Thao tác này xóa phân công đã lưu trong hệ thống.'))return;
+    try{
+      const result=await API.removeSavedAssignments(maDot);
+      S.exams.forEach(e=>{e.so_da_cap=0;e.asg.forEach(a=>{a.lock=false})});
+      save();render();
+      const deleted=Number(result.assignments_deleted)||0;
+      toast(deleted
+        ?'Đã thu hồi '+deleted+' phân công của đợt '+maDot+' khỏi lịch giảng viên.'
+        :'Đợt '+maDot+' không có phân công đã công bố. Nếu lịch vẫn hiện, ca đó có thể thuộc đợt khác.');
+    }catch(e){toast('Không gỡ được lịch đã lưu: '+(e.message||e))}
+  },
+  async 'toggle-schedule-sharing'(){
+    if(scheduleSharingEnabled===null){toast('Chưa đọc được trạng thái chia sẻ lịch.');return}
+    try{
+      const result=await API.setScheduleSharing(!scheduleSharingEnabled);
+      scheduleSharingEnabled=!!result.enabled;scheduleSharingError='';updateScheduleSharingControls();
+      toast(scheduleSharingEnabled?'Đã cho phép giảng viên xem lịch của nhau.':'Đã tắt quyền xem lịch của nhau.');
+    }catch(e){toast('Không cập nhật được quyền xem lịch: '+e.message)}
+  },
+  'refresh-schedule-sharing'(){loadScheduleSharingStatus(true)},
   lock(t){const e=exm(+t.dataset.ex),a=e.asg.find(x=>String(x.l)===String(t.dataset.l));a.lock=!a.lock;render()},
   unasg(t){const e=exm(+t.dataset.ex);e.asg=e.asg.filter(x=>String(x.l)!==String(t.dataset.l));render()},
-  'clear-unlocked'(){let n=0;S.exams.forEach(e=>{const k=e.asg.filter(a=>a.lock);n+=e.asg.length-k.length;e.asg=k});render();toast('Đã xóa '+n+' phân công chưa khóa.')},
+  'clear-unlocked'(){let n=0;S.exams.forEach(e=>{const k=e.asg.filter(a=>a.lock);n+=e.asg.length-k.length;e.asg=k});render();toast('Đã xóa '+n+' mục bản nháp. Lịch đã công bố của giảng viên không đổi; muốn gỡ, chọn “Thu hồi lịch đã công bố”.')},
   'save-hist'(){snapshot('Thủ công');render();toast('Đã lưu bản này vào lịch sử.')},
   tab6(t){tab6=t.dataset.t;render()},
   xmode(t){F.xm=t.dataset.m;render()},

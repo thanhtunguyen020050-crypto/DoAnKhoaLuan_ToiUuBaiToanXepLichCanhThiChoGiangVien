@@ -4,10 +4,12 @@ try:
     from ..ketnoi_sql import get_connection
     from ..schemas.admin import GiangVienIn
     from ..services.admin_helpers import dict_rows, bomon_for_khoa
+    from ..models.admin_system import create_lecturer as _create_lecturer
 except ImportError:
     from ketnoi_sql import get_connection
     from schemas.admin import GiangVienIn
     from services.admin_helpers import dict_rows, bomon_for_khoa
+    from models.admin_system import create_lecturer as _create_lecturer
 
 router = APIRouter(tags=['Quản trị - hệ thống và giảng viên'])
 
@@ -56,16 +58,7 @@ ORDER BY k.TenKhoa,bm.TenBoMon,gv.HoTen''',ma_dot,ma_dot)
 
 @router.post('/api/giang-vien')
 def create_lecturer(x:GiangVienIn):
-    ma=x.ma_gv or ('GV'+__import__('time').strftime('%y%m%d%H%M%S%f')[:16])
-    try:
-        with get_connection() as cn:
-            cur=cn.cursor();bm=bomon_for_khoa(cur,x.don_vi,x.ma_bo_mon)
-            if not bm:raise HTTPException(400,'Không xác định được Bộ môn từ Khoa.')
-            cur.execute('EXEC dbo.sp_ThemGiangVien ?,?,?,?,?,?,?',ma,x.ho_ten,None,None,x.email,x.so_dien_thoai,bm)
-            if x.ma_dot:cur.execute('EXEC dbo.sp_ThemDinhMuc ?,?,?,NULL',x.ma_dot,ma,x.ty_le)
-            cn.commit();return {'ok':True,'ma_gv':ma}
-    except HTTPException:raise
-    except Exception as e:raise HTTPException(400,str(e))
+    return _create_lecturer(x=x)
 
 @router.put('/api/giang-vien/{ma_gv}')
 def update_lecturer(ma_gv:str,x:GiangVienIn):

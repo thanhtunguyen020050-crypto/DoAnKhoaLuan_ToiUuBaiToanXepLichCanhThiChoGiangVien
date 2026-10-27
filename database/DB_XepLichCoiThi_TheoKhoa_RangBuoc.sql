@@ -109,6 +109,18 @@ CREATE TABLE CauHinhXepLich (
 );
 GO
 
+CREATE TABLE CauHinhCongBoLich (
+    ID TINYINT NOT NULL,
+    ChoPhepXemTatCa BIT NOT NULL CONSTRAINT DF_CauHinhCongBoLich_Enabled DEFAULT 0,
+    CapNhatLuc DATETIME2 NOT NULL CONSTRAINT DF_CauHinhCongBoLich_Updated DEFAULT SYSDATETIME(),
+    NguoiCapNhat NVARCHAR(120) NULL,
+    CONSTRAINT PK_CauHinhCongBoLich PRIMARY KEY (ID),
+    CONSTRAINT CK_CauHinhCongBoLich_Singleton CHECK (ID=1)
+);
+GO
+INSERT INTO CauHinhCongBoLich(ID,ChoPhepXemTatCa) VALUES(1,0);
+GO
+
 /* Lịch dạy cố định: IMPORT từ lịch giảng dạy chính thức. Hard constraint 100%, tuyệt đối không xếp gác trùng. */
 CREATE TABLE LichDayGV (
     ID INT IDENTITY(1,1) NOT NULL,
@@ -294,9 +306,19 @@ BEGIN
     IF @MaKhoa IS NOT NULL AND NOT EXISTS(SELECT 1 FROM Khoa WHERE MaKhoa=@MaKhoa)
         THROW 51012,N'Khoa không tồn tại.',1;
 
+    -- DinhMucPhanCong also defines who participates in this exam period.
+    -- Update only that selected set; never add every active lecturer here.
+    IF NOT EXISTS(
+        SELECT 1 FROM DinhMucPhanCong d
+        JOIN GiangVien g ON g.MaGV=d.MaGV
+        JOIN BoMon bm ON bm.MaBoMon=g.MaBoMon
+        WHERE d.MaDot=@MaDot AND g.TrangThai=N'Đang công tác'
+          AND (@MaKhoa IS NULL OR bm.MaKhoa=@MaKhoa)
+    )
+        THROW 51013,N'Đợt thi chưa có giảng viên tham gia trong phạm vi đã chọn.',1;
+
     BEGIN TRAN;
 
-    -- Chỉ cập nhật GV đã được chọn tham gia đợt (có dòng trong DinhMucPhanCong); không tự thêm GV mới.
     UPDATE d SET TyLeDinhMuc=@TyLeDinhMuc, GhiChu=N'Đặt định mức chung'
     FROM DinhMucPhanCong d
     JOIN GiangVien g ON g.MaGV=d.MaGV
@@ -375,6 +397,7 @@ BEGIN
  SET NOCOUNT ON; SET XACT_ABORT ON;
  IF NOT EXISTS(SELECT 1 FROM dbo.GiangVien WHERE MaGV=@MaGV) THROW 52204,N'Không tìm thấy giảng viên.',1;
  UPDATE dbo.GiangVien SET TrangThai=N'Ngừng công tác' WHERE MaGV=@MaGV;
+ UPDATE dbo.TaiKhoanGiangVien SET IsActive=0 WHERE MaGV=@MaGV;
  SELECT MaGV,HoTen,MaBoMon,TrangThai FROM dbo.GiangVien WHERE MaGV=@MaGV;
 END;
 GO
@@ -1019,7 +1042,7 @@ BEGIN
         CONSTRAINT FK_YCBB_GVThayThe FOREIGN KEY (MaGVThayTheDeNghi)
             REFERENCES dbo.GiangVien(MaGV),
         CONSTRAINT CK_YCBB_ThoiGian CHECK (ThoiGianBatDauBan < ThoiGianKetThucBan),
-        CONSTRAINT CK_YCBB_TrangThai CHECK (TrangThai IN ('PENDING','APPROVED','REJECTED'))
+        CONSTRAINT CK_YCBB_TrangThai CHECK (TrangThai IN ('PENDING','APPROVED','REJECTED','WITHDRAWN'))
     );
 END;
 GO
@@ -1027,6 +1050,21 @@ GO
 /* Bổ sung cột cho database đã có bảng YeuCauBaoBan từ phiên bản cũ. */
 IF COL_LENGTH(N'dbo.YeuCauBaoBan', N'MaGVThayTheDeNghi') IS NULL
     ALTER TABLE dbo.YeuCauBaoBan ADD MaGVThayTheDeNghi VARCHAR(20) NULL;
+GO
+
+/* Người được nhờ xác nhận trước khi yêu cầu được chuyển đến Admin. */
+IF COL_LENGTH(N'dbo.YeuCauBaoBan', N'TrangThaiXacNhanThayThe') IS NULL
+    ALTER TABLE dbo.YeuCauBaoBan ADD TrangThaiXacNhanThayThe VARCHAR(20) NULL;
+IF COL_LENGTH(N'dbo.YeuCauBaoBan', N'ThoiGianPhanHoiThayThe') IS NULL
+    ALTER TABLE dbo.YeuCauBaoBan ADD ThoiGianPhanHoiThayThe DATETIME2 NULL;
+GO
+
+/* Các lời mời cũ vẫn chờ người được nhờ phản hồi theo quy trình mới. */
+UPDATE dbo.YeuCauBaoBan
+SET TrangThaiXacNhanThayThe = 'PENDING'
+WHERE MaGVThayTheDeNghi IS NOT NULL
+  AND TrangThai = 'PENDING'
+  AND TrangThaiXacNhanThayThe IS NULL;
 GO
 
 IF NOT EXISTS (
@@ -1114,5 +1152,122 @@ SELECT N'YeuCauBaoBan.MaGVThayTheDeNghi' AS Cot,
 UNION ALL
 SELECT N'ThongBao.YeuCauBaoBanID',
        CASE WHEN COL_LENGTH(N'dbo.ThongBao',N'YeuCauBaoBanID') IS NOT NULL THEN N'OK' ELSE N'THIẾU' END;
+GO
+IF OBJECT_ID(N'dbo.CaThi', N'U') IS NULL
+    THROW 54101, N'Không tìm thấy dbo.CaThi trong DB_XepLichCoiThi_Final.', 1;
+IF OBJECT_ID(N'dbo.YeuCauBaoBan', N'U') IS NULL
+    THROW 54102, N'Không tìm thấy dbo.YeuCauBaoBan. Hãy chạy phần cấu trúc báo bận trước.', 1;
+GO
+
+IF EXISTS (
+    SELECT 1 FROM sys.columns
+    WHERE object_id=OBJECT_ID(N'dbo.YeuCauBaoBan')
+      AND name=N'MaCa' AND is_nullable=0
+)
+    ALTER TABLE dbo.YeuCauBaoBan ALTER COLUMN MaCa VARCHAR(50) NULL;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.sp_XoaTatCaCaThi
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+        DECLARE @MaCa TABLE (MaCa VARCHAR(50) NOT NULL PRIMARY KEY);
+        DECLARE @YeuCauDoiCa TABLE (ID BIGINT NOT NULL PRIMARY KEY);
+        DECLARE @SoCaDaXoa INT;
+
+        INSERT INTO @MaCa(MaCa)
+        SELECT MaCa FROM dbo.CaThi;
+
+        SELECT @SoCaDaXoa=COUNT(*) FROM @MaCa;
+
+        INSERT INTO @YeuCauDoiCa(ID)
+        SELECT yc.ID
+        FROM dbo.YeuCauDoiCa AS yc
+        WHERE EXISTS (SELECT 1 FROM @MaCa AS ca WHERE ca.MaCa=yc.MaCaGui)
+           OR EXISTS (SELECT 1 FROM @MaCa AS ca WHERE ca.MaCa=yc.MaCaNhan);
+
+        DELETE tb
+        FROM dbo.ThongBao AS tb
+        INNER JOIN @YeuCauDoiCa AS yc ON yc.ID=tb.YeuCauDoiCaID;
+
+        DELETE ls
+        FROM dbo.LichSuDoiCa AS ls
+        INNER JOIN @YeuCauDoiCa AS yc ON yc.ID=ls.YeuCauDoiCaID;
+
+        DELETE yc
+        FROM dbo.YeuCauDoiCa AS yc
+        INNER JOIN @YeuCauDoiCa AS x ON x.ID=yc.ID;
+
+        DELETE ls
+        FROM dbo.LichSuDieuChinhLich AS ls
+        INNER JOIN @MaCa AS ca ON ca.MaCa=ls.MaCa;
+
+        UPDATE yc
+           SET MaCa=NULL
+        FROM dbo.YeuCauBaoBan AS yc
+        INNER JOIN @MaCa AS ca ON ca.MaCa=yc.MaCa;
+
+        DELETE pc
+        FROM dbo.PhanCongCoiThi AS pc
+        INNER JOIN @MaCa AS ca ON ca.MaCa=pc.MaCa;
+
+        DELETE ca
+        FROM dbo.CaThi AS ca
+        INNER JOIN @MaCa AS x ON x.MaCa=ca.MaCa;
+
+        UPDATE dbo.DinhMucPhanCong SET SoCaQuyDinh=0;
+
+        COMMIT TRANSACTION;
+        SELECT @SoCaDaXoa AS Deleted;
+    END TRY
+    BEGIN CATCH
+        IF XACT_STATE()<>0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH
+END;
+GO
+
+PRINT N'Đã tạo dbo.sp_XoaTatCaCaThi. Chưa xóa dữ liệu; thủ tục chạy khi bấm Xóa toàn bộ ca thi.';
+GO
+
+GO
+
+IF OBJECT_ID(N'dbo.CauHinhCongBoLich', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.CauHinhCongBoLich (
+        ID TINYINT NOT NULL,
+        ChoPhepXemTatCa BIT NOT NULL CONSTRAINT DF_CauHinhCongBoLich_Enabled DEFAULT 0,
+        CapNhatLuc DATETIME2 NOT NULL CONSTRAINT DF_CauHinhCongBoLich_Updated DEFAULT SYSDATETIME(),
+        NguoiCapNhat NVARCHAR(120) NULL,
+        CONSTRAINT PK_CauHinhCongBoLich PRIMARY KEY (ID),
+        CONSTRAINT CK_CauHinhCongBoLich_Singleton CHECK (ID=1)
+    );
+END;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM dbo.CauHinhCongBoLich WHERE ID=1)
+    INSERT INTO dbo.CauHinhCongBoLich(ID,ChoPhepXemTatCa) VALUES(1,0);
+GO
+IF OBJECT_ID(N'dbo.YeuCauBaoBan', N'U') IS NULL
+    THROW 50001, N'Không tìm thấy bảng dbo.YeuCauBaoBan trong database hiện tại.', 1;
+GO
+
+IF EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE parent_object_id = OBJECT_ID(N'dbo.YeuCauBaoBan')
+      AND name = N'CK_YCBB_TrangThai'
+)
+    ALTER TABLE dbo.YeuCauBaoBan DROP CONSTRAINT CK_YCBB_TrangThai;
+GO
+
+ALTER TABLE dbo.YeuCauBaoBan
+    ADD CONSTRAINT CK_YCBB_TrangThai
+    CHECK (TrangThai IN ('PENDING','APPROVED','REJECTED','WITHDRAWN'));
 GO
 

@@ -7,7 +7,7 @@ class GiangVienIn(BaseModel):
     ho_ten: str = Field(min_length=1, max_length=120)
     don_vi: str = Field(default='CNTT', max_length=200)
     ma_bo_mon: str | None = None
-    email: str | None = None
+    email: str | None = Field(default=None, max_length=150)
     so_dien_thoai: str | None = None
     ty_le: float = Field(default=100, ge=0, le=100)
     ma_dot: str | None = None

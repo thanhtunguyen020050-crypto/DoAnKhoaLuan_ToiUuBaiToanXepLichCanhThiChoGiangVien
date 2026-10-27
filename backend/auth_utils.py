@@ -12,6 +12,11 @@ try:
 except ImportError:
     from core.config import settings
 
+try:
+    from .ketnoi_sql import get_connection
+except ImportError:
+    from ketnoi_sql import get_connection
+
 SECRET_KEY = settings.auth_secret_key
 TOKEN_TTL_SECONDS = settings.auth_token_ttl_seconds
 
@@ -96,7 +101,20 @@ def require_lecturer(authorization: str | None = Header(default=None),
     ma_gv = payload.get("sub") or payload.get("ma_gv")
     if role != "user" or not ma_gv:
         raise HTTPException(403, "Quyền truy cập bị từ chối. Chỉ giảng viên mới được thao tác.")
-    return str(ma_gv).strip()
+    ma_gv = str(ma_gv).strip()
+    try:
+        with get_connection() as cn:
+            cur = cn.cursor()
+            cur.execute("""SELECT 1 FROM dbo.GiangVien gv
+                           JOIN dbo.TaiKhoanGiangVien tk ON tk.MaGV=gv.MaGV
+                           WHERE gv.MaGV=? AND gv.TrangThai=N'Đang công tác' AND tk.IsActive=1""", ma_gv)
+            if not cur.fetchone():
+                raise HTTPException(401, "Tài khoản không tồn tại hoặc đã bị khóa.")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(503, "Không thể xác minh trạng thái tài khoản lúc này.")
+    return ma_gv
 
 def require_admin(authorization: str | None = Header(default=None),
                   x_auth_token: str | None = Header(default=None)) -> str:

@@ -54,31 +54,52 @@ def list_lecturers(ma_dot: str | None=None):
         raise HTTPException(500, f'Lỗi đọc GiangVien: {e}')
 
 def create_lecturer(x: GiangVienIn):
-    ma = x.ma_gv or 'GV' + __import__('time').strftime('%y%m%d%H%M%S%f')[:16]
+    email = x.email.strip() if x.email and x.email.strip() else None
     try:
         with get_connection() as cn:
             cur = cn.cursor()
+            requested_ma = (x.ma_gv or '').strip()
+            if requested_ma:
+                ma = requested_ma
+            else:
+                # Reuse the short GV0001-style identifiers used by the roster.
+                # Ignore longer legacy timestamp IDs when finding the next number.
+                cur.execute("""
+                    SELECT ISNULL(MAX(TRY_CONVERT(INT,SUBSTRING(MaGV,3,6))),0)+1
+                    FROM dbo.GiangVien WITH (UPDLOCK,HOLDLOCK)
+                    WHERE MaGV LIKE 'GV[0-9]%'
+                      AND LEN(MaGV) BETWEEN 3 AND 8
+                      AND TRY_CONVERT(INT,SUBSTRING(MaGV,3,6)) IS NOT NULL
+                """)
+                ma = 'GV' + str(int(cur.fetchone()[0])).zfill(4)
             bm = bomon_for_khoa(cur, x.don_vi, x.ma_bo_mon)
             if not bm:
                 raise HTTPException(400, 'Không xác định được Bộ môn từ Khoa.')
-            cur.execute('EXEC dbo.sp_ThemGiangVien ?,?,?,?,?,?,?', ma, x.ho_ten, None, None, x.email, x.so_dien_thoai, bm)
+            cur.execute('EXEC dbo.sp_ThemGiangVien ?,?,?,?,?,?,?', ma, x.ho_ten, None, None, email, x.so_dien_thoai, bm)
             if x.ma_dot:
                 cur.execute('EXEC dbo.sp_ThemDinhMuc ?,?,?,NULL', x.ma_dot, ma, x.ty_le)
+            # Follow the existing first-login contract used for seeded lecturers:
+            # password "1" is accepted once and the lecturer must change it.
+            cur.execute("""
+                INSERT INTO dbo.TaiKhoanGiangVien(MaGV,PasswordHash,MustChangePassword,IsActive)
+                VALUES (?,NULL,1,1)
+            """, ma)
             cn.commit()
-            return {'ok': True, 'ma_gv': ma}
+            return {'ok': True, 'ma_gv': ma, 'initial_password': '1', 'must_change_password': True}
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(400, str(e))
 
 def update_lecturer(ma_gv: str, x: GiangVienIn):
+    email = x.email.strip() if x.email and x.email.strip() else None
     try:
         with get_connection() as cn:
             cur = cn.cursor()
             bm = bomon_for_khoa(cur, x.don_vi, x.ma_bo_mon)
             if not bm:
                 raise HTTPException(400, 'Không xác định được Bộ môn từ Khoa.')
-            cur.execute("EXEC dbo.sp_SuaGiangVien ?,?,?,?,?,?,?,N'Đang công tác'", ma_gv, x.ho_ten, None, None, x.email, x.so_dien_thoai, bm)
+            cur.execute("EXEC dbo.sp_SuaGiangVien ?,?,?,?,?,?,?,N'Đang công tác'", ma_gv, x.ho_ten, None, None, email, x.so_dien_thoai, bm)
             if x.ma_dot:
                 cur.execute('SELECT 1 FROM dbo.DinhMucPhanCong WHERE MaDot=? AND MaGV=?', x.ma_dot, ma_gv)
                 if cur.fetchone():
@@ -95,8 +116,31 @@ def delete_lecturer(ma_gv: str):
         with get_connection() as cn:
             cur = cn.cursor()
             cur.execute('EXEC dbo.sp_XoaGiangVien ?', ma_gv)
+            # Preserve lecturer/schedule history, but disable the linked login.
+            cur.execute('UPDATE dbo.TaiKhoanGiangVien SET IsActive=0 WHERE MaGV=?', ma_gv)
             cn.commit()
             return {'ok': True}
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+def reactivate_lecturer(ma_gv: str):
+    """Khôi phục trạng thái công tác và mở lại tài khoản đăng nhập."""
+    try:
+        with get_connection() as cn:
+            cur = cn.cursor()
+            cur.execute('SELECT 1 FROM dbo.GiangVien WHERE MaGV=?', ma_gv)
+            if not cur.fetchone():
+                raise HTTPException(404, 'Không tìm thấy giảng viên.')
+            cur.execute("UPDATE dbo.GiangVien SET TrangThai=N'Đang công tác' WHERE MaGV=?", ma_gv)
+            cur.execute('SELECT 1 FROM dbo.TaiKhoanGiangVien WHERE MaGV=?', ma_gv)
+            if cur.fetchone():
+                cur.execute('UPDATE dbo.TaiKhoanGiangVien SET IsActive=1 WHERE MaGV=?', ma_gv)
+            else:
+                cur.execute('INSERT INTO dbo.TaiKhoanGiangVien(MaGV,PasswordHash,MustChangePassword,IsActive) VALUES (?,NULL,1,1)', ma_gv)
+            cn.commit()
+            return {'ok': True}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(400, str(e))
 

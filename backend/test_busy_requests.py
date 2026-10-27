@@ -1,13 +1,7 @@
 """Kịch bản kiểm thử toàn diện chức năng Giảng viên báo bận và Admin duyệt đổi lịch coi thi.
-Kiểm tra tất cả các trường hợp:
-- Trường hợp A: Giảng viên gửi yêu cầu hợp lệ
-- Trường hợp B: Giảng viên xem dữ liệu trái quyền (bị từ chối 403)
-- Trường hợp C: Admin chấp nhận với phương án hợp lệ (cập nhật lịch & lịch sử)
-- Trường hợp D: Admin chọn phương án vi phạm ràng buộc (bị từ chối, lịch giữ nguyên)
-- Trường hợp E: Admin từ chối yêu cầu (kèm lý do, lịch giữ nguyên)
-- Trường hợp F: Hai Admin xử lý đồng thời (xung đột trạng thái 409)
-- Trường hợp G: Tính toàn vẹn transaction (không cập nhật dở dang)
-- Trường hợp H: Regression test các chức năng hiện có
+Kiểm tra luồng mới: người gửi mời giảng viên thay thế, giảng viên đó đồng ý,
+sau đó Admin mới xem/duyệt; hỗ trợ đổi người được nhờ và kiểm tra quyền thông báo.
+Các ca vi phạm ràng buộc, từ chối Admin và hồi quy tiếp tục được kiểm tra bên dưới.
 """
 import sys
 import os
@@ -119,16 +113,89 @@ def run_tests():
     assert res_b.status_code == 403, f"Hệ thống không chặn truy cập trái quyền! Code: {res_b.status_code}"
     print("  [OK] Hệ thống từ chối truy cập (403 Forbidden) đúng như mong đợi.")
 
+    # Thông báo phải yêu cầu đăng nhập và chỉ cho đúng vai trò/tài khoản truy cập.
+    assert client.get("/api/user/admin/notifications").status_code == 401
+    assert client.get("/api/user/admin/notifications", headers=headers_gv1).status_code == 403
+    assert client.get("/api/user/notifications/GV0001").status_code == 401
+    assert client.get("/api/user/notifications/GV0001", headers=headers_gv2).status_code == 403
+    assert client.post("/api/user/notifications/GV0001/1/read").status_code == 401
+    assert client.post("/api/user/notifications/GV0001/1/read", headers=headers_gv2).status_code == 403
+
+    # Admin chưa nhìn thấy hoặc xử lý được đơn khi user2 chưa được mời/đồng ý.
+    pending_admin = client.get("/api/admin/busy-requests?trang_thai=PENDING", headers=headers_admin)
+    assert pending_admin.status_code == 200
+    assert not any(x["MaYeuCau"] == req_id for x in pending_admin.json()["items"])
+    assert client.get(f"/api/admin/busy-requests/{req_id}", headers=headers_admin).status_code == 404
+    before_consent = client.post(f"/api/admin/busy-requests/{req_id}/approve",
+                                 json={"ma_gv_thay_the": "GV0002"}, headers=headers_admin)
+    assert before_consent.status_code == 409
+
+    # Chuẩn bị GV0002 đủ điều kiện, sau đó mời và nhận xác nhận thật từ user2.
+    with ketnoi_sql.get_connection() as cn:
+        cur = cn.cursor()
+        cur.execute("DELETE FROM dbo.PhanCongCoiThi WHERE MaGV = 'GV0002'")
+        cur.execute("DELETE FROM dbo.LichDayGV WHERE MaGV = 'GV0002' AND NgayDay = ?", ca_row[2])
+        cur.execute("DELETE FROM dbo.LichBanGV WHERE MaGV = 'GV0002' AND NgayBan = ?", ca_row[2])
+        cn.commit()
+    invite = client.post(f"/api/user/busy-requests/{req_id}/request-cover",
+                         json={"ma_gv_thay_the": "GV0002"}, headers=headers_gv1)
+    assert invite.status_code == 200, invite.text
+    assert invite.json()["trang_thai_xac_nhan_thay_the"] == "PENDING"
+    pending_admin = client.get("/api/admin/busy-requests?trang_thai=PENDING", headers=headers_admin)
+    assert not any(x["MaYeuCau"] == req_id for x in pending_admin.json()["items"])
+    admin_notices = client.get("/api/user/admin/notifications", headers=headers_admin)
+    assert admin_notices.status_code == 200
+    assert not any(x.get("YeuCauBaoBanID") == req_id and x.get("Loai") == "BusyRequest" for x in admin_notices.json()["items"])
+    assert client.get(f"/api/admin/busy-requests/{req_id}/candidates", headers=headers_admin).status_code == 409
+    assert client.post(f"/api/admin/busy-requests/{req_id}/approve",
+                       json={"ma_gv_thay_the": "GV0002"}, headers=headers_admin).status_code == 409
+    assert client.post(f"/api/user/busy-requests/{req_id}/respond-cover",
+                       json={"chap_nhan": True}, headers=headers_gv3).status_code == 403
+    consent = client.post(f"/api/user/busy-requests/{req_id}/respond-cover",
+                         json={"chap_nhan": True}, headers=headers_gv2)
+    assert consent.status_code == 200, consent.text
+    assert consent.json()["trang_thai_xac_nhan_thay_the"] == "ACCEPTED"
+
+    pending_admin = client.get("/api/admin/busy-requests?trang_thai=PENDING", headers=headers_admin)
+    assert any(x["MaYeuCau"] == req_id for x in pending_admin.json()["items"])
+    admin_detail = client.get(f"/api/admin/busy-requests/{req_id}", headers=headers_admin)
+    assert admin_detail.status_code == 200
+    assert admin_detail.json()["TrangThaiXacNhanThayThe"] == "ACCEPTED"
+    admin_notices = client.get("/api/user/admin/notifications", headers=headers_admin)
+    assert any(x.get("YeuCauBaoBanID") == req_id and x.get("Loai") == "BusyRequest" for x in admin_notices.json()["items"])
+    nominee = "GV0002"
+    # Nếu GV0003 đủ điều kiện, đổi người đã đồng ý; đơn phải rời hàng chờ Admin
+    # cho đến khi giảng viên mới xác nhận.
+    candidate_resp = client.get(f"/api/user/busy-requests/{req_id}/candidates", headers=headers_gv1)
+    other_candidate = next((c for c in candidate_resp.json().get("candidates", []) if c["MaGV"] == "GV0003"), None)
+    if other_candidate:
+        replaced = client.post(f"/api/user/busy-requests/{req_id}/request-cover",
+                               json={"ma_gv_thay_the": "GV0003"}, headers=headers_gv1)
+        assert replaced.status_code == 200, replaced.text
+        nominee = "GV0003"
+        pending_admin = client.get("/api/admin/busy-requests?trang_thai=PENDING", headers=headers_admin)
+        assert not any(x["MaYeuCau"] == req_id for x in pending_admin.json()["items"])
+        admin_notices = client.get("/api/user/admin/notifications", headers=headers_admin)
+        assert not any(x.get("YeuCauBaoBanID") == req_id and x.get("Loai") == "BusyRequest" for x in admin_notices.json()["items"])
+        assert client.post(f"/api/admin/busy-requests/{req_id}/approve",
+                           json={"ma_gv_thay_the": nominee}, headers=headers_admin).status_code == 409
+        replacement_consent = client.post(f"/api/user/busy-requests/{req_id}/respond-cover",
+                                          json={"chap_nhan": True}, headers=headers_gv3)
+        assert replacement_consent.status_code == 200, replacement_consent.text
+        assert replacement_consent.json()["trang_thai_xac_nhan_thay_the"] == "ACCEPTED"
+        admin_notices = client.get("/api/user/admin/notifications", headers=headers_admin)
+        assert any(x.get("YeuCauBaoBanID") == req_id and x.get("Loai") == "BusyRequest" for x in admin_notices.json()["items"])
+
     # =====================================================================
     # TRƯỜNG HỢP D — ADMIN CHỌN PHƯƠNG ÁN VI PHẠM RÀNG BUỘC
     # =====================================================================
     print("\n--- [TEST D] Admin chọn phương án vi phạm ràng buộc ---")
-    # Trường hợp D1: Chọn chính GV báo bận để thay thế
+    # Chọn giảng viên không phải người đã được nhờ và đồng ý phải bị chặn.
     res_d1 = client.post(f"/api/admin/busy-requests/{req_id}/approve",
                          json={"ma_gv_thay_the": "GV0001", "ghi_chu_admin": "Test vi phạm"},
                          headers=headers_admin)
-    assert res_d1.status_code == 400, f"Không chặn chọn chính mình! Code: {res_d1.status_code}"
-    print("  [OK] Chặn gán lại cho chính GV báo bận.")
+    assert res_d1.status_code == 409, f"Không chặn được người chưa được nhờ/đồng ý! Code: {res_d1.status_code}"
+    print("  [OK] Chỉ được duyệt đúng giảng viên đã đồng ý.")
 
     # Trường hợp D2: Tạo một ca trùng thời gian cho GV0003, rồi Admin gán GV0003
     with ketnoi_sql.get_connection() as cn:
@@ -139,10 +206,10 @@ def run_tests():
         ca_trung = cur.fetchone()
         if ca_trung:
             cur.execute("DELETE FROM dbo.PhanCongCoiThi WHERE MaCa = ?", ca_trung[0])
-            cur.execute("INSERT INTO dbo.PhanCongCoiThi (MaCa, MaGV) VALUES (?, 'GV0003')", ca_trung[0])
+            cur.execute("INSERT INTO dbo.PhanCongCoiThi (MaCa, MaGV) VALUES (?, ?)", ca_trung[0], nominee)
             cn.commit()
             res_d2 = client.post(f"/api/admin/busy-requests/{req_id}/approve",
-                                 json={"ma_gv_thay_the": "GV0003"},
+                                 json={"ma_gv_thay_the": nominee},
                                  headers=headers_admin)
             assert res_d2.status_code == 400, "Không phát hiện vi phạm trùng thời gian RB3!"
             print(f"  [OK] Bị chặn khi vi phạm RB3 trùng ca thi: {res_d2.json()['detail']['message']}")
@@ -158,16 +225,16 @@ def run_tests():
     # TRƯỜNG HỢP C — ADMIN CHẤP NHẬN VỚI PHƯƠNG ÁN HỢP LỆ
     # =====================================================================
     print("\n--- [TEST C] Admin chấp nhận với phương án hợp lệ ---")
-    # Đảm bảo GV0002 rảnh và hợp lệ 100%
+    # Đảm bảo giảng viên đã đồng ý không còn xung đột trước khi duyệt.
     with ketnoi_sql.get_connection() as cn:
         cur = cn.cursor()
-        cur.execute("DELETE FROM dbo.PhanCongCoiThi WHERE MaGV = 'GV0002'")
-        cur.execute("DELETE FROM dbo.LichDayGV WHERE MaGV = 'GV0002' AND NgayDay = ?", ca_row[2])
-        cur.execute("DELETE FROM dbo.LichBanGV WHERE MaGV = 'GV0002' AND NgayBan = ?", ca_row[2])
+        cur.execute("DELETE FROM dbo.PhanCongCoiThi WHERE MaGV = ?", nominee)
+        cur.execute("DELETE FROM dbo.LichDayGV WHERE MaGV = ? AND NgayDay = ?", nominee, ca_row[2])
+        cur.execute("DELETE FROM dbo.LichBanGV WHERE MaGV = ? AND NgayBan = ?", nominee, ca_row[2])
         cn.commit()
 
     res_c = client.post(f"/api/admin/busy-requests/{req_id}/approve",
-                        json={"ma_gv_thay_the": "GV0002", "ghi_chu_admin": "Admin phê duyệt đổi sang GV0002"},
+                        json={"ma_gv_thay_the": nominee, "ghi_chu_admin": f"Admin phê duyệt đổi sang {nominee}"},
                         headers=headers_admin)
     assert res_c.status_code == 200, f"Duyệt phương án hợp lệ thất bại: {res_c.text}"
     data_c = res_c.json()
@@ -180,14 +247,14 @@ def run_tests():
         cur = cn.cursor()
         cur.execute("SELECT MaGV FROM dbo.PhanCongCoiThi WHERE MaCa = ?", ma_ca)
         new_gv = cur.fetchone()[0]
-        assert new_gv == "GV0002", f"Phân công không được cập nhật sang GV0002: {new_gv}"
+        assert new_gv == nominee, f"Phân công không được cập nhật sang {nominee}: {new_gv}"
         print("  [OK] Lịch chính thức trong SQL Server đã cập nhật sang GV0002.")
 
         # Kiểm tra bảng lịch sử
         cur.execute("SELECT MaGV, MaGVThayThe, NguoiThucHien, HanhDong FROM dbo.LichSuDieuChinhLich WHERE MaYeuCau = ?", req_id)
         hist = cur.fetchone()
         assert hist is not None, "Không tìm thấy bản ghi lịch sử!"
-        assert hist[0] == "GV0001" and hist[1] == "GV0002"
+        assert hist[0] == "GV0001" and hist[1] == nominee
         print(f"  [OK] Bảng lịch sử ghi nhận: GV {hist[0]} -> {hist[1]}, người duyệt: {hist[2]}.")
 
     # Giảng viên A kiểm tra chi tiết yêu cầu thấy thông tin mới
@@ -216,13 +283,22 @@ def run_tests():
     # Tìm ca thứ hai để tạo yêu cầu mới
     with ketnoi_sql.get_connection() as cn:
         cur = cn.cursor()
-        cur.execute("SELECT TOP 1 MaCa, NgayThi, TuTiet, DenTiet FROM dbo.CaThi WHERE MaCa <> ? ORDER BY NgayThi, TuTiet", ma_ca)
+        cur.execute("SELECT TOP 1 MaCa, NgayThi, TuTiet, DenTiet, MaDot FROM dbo.CaThi WHERE MaCa <> ? ORDER BY NgayThi, TuTiet", ma_ca)
         ca2 = cur.fetchone()
         ca2_ma = ca2[0]
         cur.execute("DELETE FROM dbo.PhanCongCoiThi WHERE MaCa = ?", ca2_ma)
         cur.execute("INSERT INTO dbo.PhanCongCoiThi (MaCa, MaGV) VALUES (?, 'GV0001')", ca2_ma)
         cur.execute("DELETE FROM dbo.LichSuDieuChinhLich WHERE MaCa = ?", ca2_ma)
         cur.execute("DELETE FROM dbo.YeuCauBaoBan WHERE MaCa = ?", ca2_ma)
+        for gv in ('GV0002', 'GV0003'):
+            cur.execute("DELETE FROM dbo.PhanCongCoiThi WHERE MaGV = ?", gv)
+            cur.execute("DELETE FROM dbo.LichDayGV WHERE MaGV = ? AND NgayDay = ?", gv, ca2[1])
+            cur.execute("DELETE FROM dbo.LichBanGV WHERE MaGV = ? AND NgayBan = ?", gv, ca2[1])
+            cur.execute("SELECT 1 FROM dbo.DinhMucPhanCong WHERE MaDot = ? AND MaGV = ?", ca2[4], gv)
+            if cur.fetchone():
+                cur.execute("UPDATE dbo.DinhMucPhanCong SET SoCaQuyDinh = 5 WHERE MaDot = ? AND MaGV = ?", ca2[4], gv)
+            else:
+                cur.execute("INSERT INTO dbo.DinhMucPhanCong (MaDot, MaGV, TyLeDinhMuc, SoCaQuyDinh) VALUES (?, ?, 100, 5)", ca2[4], gv)
         cn.commit()
 
     # GV0001 gửi yêu cầu báo bận cho ca 2
@@ -235,6 +311,29 @@ def run_tests():
     }, headers=headers_gv1)
     assert res_req2.status_code == 200
     req2_id = res_req2.json()["ma_yeu_cau"]
+
+    # Admin không thể từ chối yêu cầu chưa được người được nhờ xác nhận.
+    early_reject = client.post(f"/api/admin/busy-requests/{req2_id}/reject",
+                               json={"ly_do_tu_choi": "Chưa có xác nhận"}, headers=headers_admin)
+    assert early_reject.status_code == 409
+    reject_candidates = client.get(f"/api/user/busy-requests/{req2_id}/candidates", headers=headers_gv1)
+    reject_choices = [c["MaGV"] for c in reject_candidates.json().get("candidates", []) if c["MaGV"] in ("GV0002", "GV0003")]
+    reject_nominee = reject_choices[0] if reject_choices else None
+    assert reject_nominee, "Không có GV0002/GV0003 đủ điều kiện để kiểm tra nhánh từ chối."
+    reject_headers = headers_gv2 if reject_nominee == "GV0002" else headers_gv3
+    assert client.post(f"/api/user/busy-requests/{req2_id}/request-cover",
+                       json={"ma_gv_thay_the": reject_nominee}, headers=headers_gv1).status_code == 200
+    pending_replacement = next((ma_gv for ma_gv in reject_choices if ma_gv != reject_nominee), None)
+    if pending_replacement:
+        replacement_headers = headers_gv2 if pending_replacement == "GV0002" else headers_gv3
+        assert client.post(f"/api/user/busy-requests/{req2_id}/request-cover",
+                           json={"ma_gv_thay_the": pending_replacement}, headers=headers_gv1).status_code == 200
+        assert client.post(f"/api/user/busy-requests/{req2_id}/respond-cover",
+                           json={"chap_nhan": True}, headers=reject_headers).status_code == 403
+        reject_nominee, reject_headers = pending_replacement, replacement_headers
+    reject_consent = client.post(f"/api/user/busy-requests/{req2_id}/respond-cover",
+                                 json={"chap_nhan": True}, headers=reject_headers)
+    assert reject_consent.status_code == 200, reject_consent.text
 
     # Admin từ chối mà KHÔNG nhập lý do -> Phải báo lỗi
     res_e_empty = client.post(f"/api/admin/busy-requests/{req2_id}/reject", json={"ly_do_tu_choi": "   "}, headers=headers_admin)

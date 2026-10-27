@@ -1,20 +1,49 @@
 'use strict';
 window.API = (() => {
   const base = window.API_BASE_URL || 'http://127.0.0.1:8000/api';
+  function friendlyError(message, status) {
+    const text = String(message || '');
+    if (status >= 500 || /SQL Server|ODBC|SQLExecDirect|SQLDriverConnect|invalid object name|stored procedure|dbo\.|database|SQLSTATE|Microsoft/i.test(text)) {
+      return 'Chưa thể hoàn tất thao tác. Vui lòng thử lại; nếu lỗi tiếp diễn, hãy liên hệ quản trị viên.';
+    }
+    return text || 'Yêu cầu không thành công.';
+  }
   async function req(path, opts={}) {
     const token = sessionStorage.getItem('authToken');
     const headers = {'Content-Type':'application/json', ...(opts.headers || {})};
     if (token) headers['Authorization'] = 'Bearer ' + token;
-    const r = await fetch(base + path, {...opts, headers});
+    let r;
+    try {
+      // These endpoints expose live scheduling data. Do not let the browser
+      // reuse a cached GET after an admin publishes or removes assignments.
+      r = await fetch(base + path, {...opts, headers, cache:opts.cache||'no-store'});
+    } catch (e) {
+      const err = new Error('Không kết nối được máy chủ API. Hãy kiểm tra backend đang chạy tại '+base+'.');
+      err.cause = e;
+      throw err;
+    }
     const data = await r.json().catch(()=>({}));
     if (!r.ok){
       const d=data.detail;
       const msg=typeof d==='string'?d:(d?.message||((d?.errors||d?.violations||[]).map(x=>typeof x==='string'?x:`Dòng ${x.line}: ${x.name||''} ${x.msg||''}`).join('\n'))||('API lỗi '+r.status));
-      const err=new Error(msg); err.detail=d; throw err;
+      const err=new Error(friendlyError(msg, r.status));
+      err.detail=d==='Not Found'?'Not Found':(d&&typeof d==='object'?{
+        ...d,
+        message:d.message?friendlyError(d.message,r.status):d.message,
+        errors:Array.isArray(d.errors)?d.errors.map(x=>typeof x==='string'?friendlyError(x,r.status):({...x,msg:friendlyError(x.msg,r.status)})):d.errors,
+        violations:Array.isArray(d.violations)?d.violations.map(x=>friendlyError(x,r.status)):d.violations
+      }:friendlyError(d,r.status));
+      throw err;
     }
     return data;
   }
+  function signalScheduleChange(action, maDot) {
+    try {
+      localStorage.setItem('huit-schedule-data-change', JSON.stringify({action,ma_dot:maDot,at:Date.now()}));
+    } catch (_) {}
+  }
   return {
+    friendlyError,
     async health(){return req('/kiem-tra-ket-noi')},
     async adminNotifications(){return req('/user/admin/notifications')},
     async adminBusyRequests(trangThai=null, q=null){
@@ -51,6 +80,8 @@ window.API = (() => {
       }
     },
     async resetUserPassword(maGV, username, currentPassword){return req('/user/admin/accounts/'+encodeURIComponent(maGV)+'/reset-password',{method:'POST',body:JSON.stringify({username,current_password:currentPassword})})},
+    async scheduleSharing(){return req('/user/admin/schedule-sharing')},
+    async setScheduleSharing(enabled){return req('/user/admin/schedule-sharing',{method:'PUT',body:JSON.stringify({enabled})})},
     async solveSchedule(payload){return req('/xep-lich/cpsat',{method:'POST',body:JSON.stringify(payload)})},
     async latestDot(){return req('/dot-thi/moi-nhat')},
     async dots(){return req('/dot-thi')},
@@ -62,7 +93,8 @@ window.API = (() => {
     async updateExam(id,x){return req('/ca-thi/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(x)})},
     async deleteExam(id){return req('/ca-thi/'+encodeURIComponent(id),{method:'DELETE'})},
     async clearAllExams(){return req('/ca-thi/all',{method:'DELETE'})},
-    async saveAssignments(maDot,assignments,dinhMuc=[]){return req('/dot-thi/'+encodeURIComponent(maDot)+'/phan-cong',{method:'POST',body:JSON.stringify({assignments,dinh_muc:dinhMuc})})},
+    async saveAssignments(maDot,assignments,dinhMuc=[]){const result=await req('/dot-thi/'+encodeURIComponent(maDot)+'/phan-cong',{method:'POST',body:JSON.stringify({assignments,dinh_muc:dinhMuc})});signalScheduleChange('saved',maDot);return result},
+    async removeSavedAssignments(maDot){const result=await req('/dot-thi/'+encodeURIComponent(maDot)+'/phan-cong',{method:'DELETE'});signalScheduleChange('removed',maDot);return result},
     async lecturers(dot){return req('/giang-vien'+(dot?'?ma_dot='+encodeURIComponent(dot):''))},
     async createLecturer(x){return req('/giang-vien',{method:'POST',body:JSON.stringify(x)})},
     async updateLecturer(id,x){return req('/giang-vien/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(x)})},
@@ -71,6 +103,7 @@ window.API = (() => {
     async boMon(khoa='CNTT'){return req('/bo-mon?ma_khoa='+encodeURIComponent(khoa))},
     async resolveKhoa(ten){const r=await req('/khoa/resolve?ten='+encodeURIComponent(ten));return r.MaKhoa},
     async deleteLecturer(id){return req('/giang-vien/'+encodeURIComponent(id),{method:'DELETE'})},
+    async reactivateLecturer(id){return req('/giang-vien/'+encodeURIComponent(id)+'/reactivate',{method:'POST'})},
     async teaching(id){return req('/lich-day/'+encodeURIComponent(id))},
     async replaceTeaching(id,items){return req('/lich-day/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(items)})},
     async importTeaching(rows,filename){return req('/lich-day/import?filename='+encodeURIComponent(filename||''),{method:'POST',body:JSON.stringify(rows)})},

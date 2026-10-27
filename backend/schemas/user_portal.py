@@ -30,3 +30,7 @@ class SwapRespondIn(BaseModel):
 class AdminPasswordResetIn(BaseModel):
     username: str = Field(min_length=1, max_length=120)
     current_password: str = Field(min_length=1, max_length=128)
+
+
+class ScheduleSharingIn(BaseModel):
+    enabled: bool

@@ -1,16 +1,21 @@
 """FastAPI Controller: HTTP endpoint, validation and delegation to Model."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 
 try:
-    from ..schemas.user_portal import LoginIn, ChangePasswordIn, SwapCreateIn, SwapRespondIn, AdminPasswordResetIn
+    from ..auth_utils import require_lecturer, require_admin
 except ImportError:
-    from schemas.user_portal import LoginIn, ChangePasswordIn, SwapCreateIn, SwapRespondIn, AdminPasswordResetIn
+    from auth_utils import require_lecturer, require_admin
 
 try:
-    from ..models.user_portal import login as _model_login, change_password as _model_change_password, my_schedule as _model_my_schedule, available_lecturers as _model_available_lecturers, create_swap as _model_create_swap, respond_swap as _model_respond_swap, list_swaps as _model_list_swaps, notifications as _model_notifications, mark_notification_read as _model_mark_notification_read, admin_notifications as _model_admin_notifications, admin_accounts as _model_admin_accounts, reset_user_password as _model_reset_user_password
+    from ..schemas.user_portal import LoginIn, ChangePasswordIn, SwapCreateIn, SwapRespondIn, AdminPasswordResetIn, ScheduleSharingIn
 except ImportError:
-    from models.user_portal import login as _model_login, change_password as _model_change_password, my_schedule as _model_my_schedule, available_lecturers as _model_available_lecturers, create_swap as _model_create_swap, respond_swap as _model_respond_swap, list_swaps as _model_list_swaps, notifications as _model_notifications, mark_notification_read as _model_mark_notification_read, admin_notifications as _model_admin_notifications, admin_accounts as _model_admin_accounts, reset_user_password as _model_reset_user_password
+    from schemas.user_portal import LoginIn, ChangePasswordIn, SwapCreateIn, SwapRespondIn, AdminPasswordResetIn, ScheduleSharingIn
+
+try:
+    from ..models.user_portal import login as _model_login, change_password as _model_change_password, my_schedule as _model_my_schedule, all_schedules as _model_all_schedules, schedule_access as _model_schedule_access, get_schedule_sharing as _model_get_schedule_sharing, set_schedule_sharing as _model_set_schedule_sharing, available_lecturers as _model_available_lecturers, create_swap as _model_create_swap, respond_swap as _model_respond_swap, list_swaps as _model_list_swaps, notifications as _model_notifications, mark_notification_read as _model_mark_notification_read, admin_notifications as _model_admin_notifications, admin_accounts as _model_admin_accounts, reset_user_password as _model_reset_user_password
+except ImportError:
+    from models.user_portal import login as _model_login, change_password as _model_change_password, my_schedule as _model_my_schedule, all_schedules as _model_all_schedules, schedule_access as _model_schedule_access, get_schedule_sharing as _model_get_schedule_sharing, set_schedule_sharing as _model_set_schedule_sharing, available_lecturers as _model_available_lecturers, create_swap as _model_create_swap, respond_swap as _model_respond_swap, list_swaps as _model_list_swaps, notifications as _model_notifications, mark_notification_read as _model_mark_notification_read, admin_notifications as _model_admin_notifications, admin_accounts as _model_admin_accounts, reset_user_password as _model_reset_user_password
 
 router = APIRouter(prefix="/api/user", tags=["User UI"])
 
@@ -23,8 +28,16 @@ def change_password(x: ChangePasswordIn):
     return _model_change_password(x=x)
 
 @router.get('/schedule/{ma_gv}')
-def my_schedule(ma_gv: str):
-    return _model_my_schedule(ma_gv=ma_gv)
+def my_schedule(ma_gv: str, current_ma_gv: str = Depends(require_lecturer)):
+    return _model_my_schedule(ma_gv=ma_gv, requesting_ma_gv=current_ma_gv)
+
+@router.get('/schedule-access')
+def schedule_access(current_ma_gv: str = Depends(require_lecturer)):
+    return _model_schedule_access(ma_gv=current_ma_gv)
+
+@router.get('/schedules/all')
+def all_schedules(current_ma_gv: str = Depends(require_lecturer)):
+    return _model_all_schedules(requesting_ma_gv=current_ma_gv)
 
 @router.get('/lecturers/{ma_gv}')
 def available_lecturers(ma_gv: str):
@@ -43,21 +56,33 @@ def list_swaps(ma_gv: str):
     return _model_list_swaps(ma_gv=ma_gv)
 
 @router.get('/notifications/{ma_gv}')
-def notifications(ma_gv: str):
-    return _model_notifications(ma_gv=ma_gv)
+def notifications(ma_gv: str, current_ma_gv: str = Depends(require_lecturer)):
+    if ma_gv.strip().casefold() != current_ma_gv.casefold():
+        raise HTTPException(403, 'Bạn chỉ được xem thông báo của tài khoản mình.')
+    return _model_notifications(ma_gv=current_ma_gv)
 
 @router.post('/notifications/{ma_gv}/{notification_id}/read')
-def mark_notification_read(ma_gv: str, notification_id: int):
-    return _model_mark_notification_read(ma_gv=ma_gv, notification_id=notification_id)
+def mark_notification_read(ma_gv: str, notification_id: int, current_ma_gv: str = Depends(require_lecturer)):
+    if ma_gv.strip().casefold() != current_ma_gv.casefold():
+        raise HTTPException(403, 'Bạn chỉ được cập nhật trạng thái thông báo của tài khoản mình.')
+    return _model_mark_notification_read(ma_gv=current_ma_gv, notification_id=notification_id)
 
 @router.get('/admin/notifications')
-def admin_notifications():
+def admin_notifications(admin_user: str = Depends(require_admin)):
     return _model_admin_notifications()
 
 @router.get('/admin/accounts')
-def admin_accounts():
+def admin_accounts(admin_user: str = Depends(require_admin)):
     return _model_admin_accounts()
 
+@router.get('/admin/schedule-sharing')
+def get_schedule_sharing(admin_user: str = Depends(require_admin)):
+    return _model_get_schedule_sharing()
+
+@router.put('/admin/schedule-sharing')
+def set_schedule_sharing(x: ScheduleSharingIn, admin_user: str = Depends(require_admin)):
+    return _model_set_schedule_sharing(enabled=x.enabled, updated_by=admin_user)
+
 @router.post('/admin/accounts/{ma_gv}/reset-password')
-def reset_user_password(ma_gv: str, x: AdminPasswordResetIn):
+def reset_user_password(ma_gv: str, x: AdminPasswordResetIn, admin_user: str = Depends(require_admin)):
     return _model_reset_user_password(ma_gv=ma_gv, x=x)

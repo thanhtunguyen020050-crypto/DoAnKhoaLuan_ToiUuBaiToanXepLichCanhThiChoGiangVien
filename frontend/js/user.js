@@ -1,8 +1,11 @@
 (() => {
   const $ = s => document.querySelector(s);
   const base = window.API_BASE_URL || 'http://127.0.0.1:8000/api';
-  const state = {user:null, page:'schedule', busyRequests:[], swaps:[], schedule:[], lecturers:[], notices:[], pendingCoverId:null, calendarDate:null, calendarMode:'week', selectedBusyCa:null};
+  const state = {user:null, page:'schedule', busyRequests:[], swaps:[], schedule:[], allSchedules:[], scheduleAccess:{can_view_all:false,lecturers:[]}, scheduleViewer:'mine', lecturers:[], notices:[], pendingCoverId:null, calendarDate:null, calendarMode:'week', selectedBusyCa:null};
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const friendlyError = (message, status) => status >= 500 || /SQL Server|ODBC|SQLExecDirect|SQLDriverConnect|invalid object name|stored procedure|dbo\.|database|SQLSTATE|Microsoft/i.test(String(message||''))
+    ? 'Chưa thể hoàn tất thao tác. Vui lòng thử lại; nếu lỗi tiếp diễn, hãy liên hệ quản trị viên.'
+    : String(message||'Yêu cầu không thành công.');
   const logoSrc = (() => {
     try {
       const savedLogo = JSON.parse(localStorage.getItem(KEY) || 'null')?.logo;
@@ -18,14 +21,17 @@
     if (token) headers['Authorization'] = 'Bearer ' + token;
     let r;
     try {
-      r = await fetch(base+path,{...opts, headers});
+      // Schedule data must be read fresh after an admin publishes/removes it.
+      r = await fetch(base+path,{...opts, headers, cache:opts.cache||'no-store'});
     } catch (_) {
-      throw new Error(`Không kết nối được Backend tại ${base}. Hãy mở terminal Backend và chạy: cd C:\\KhoaLuan_XepLichCaThi\\backend; .\\.venv\\Scripts\\python.exe run.py`);
+      throw new Error('Không thể gửi yêu cầu ngay lúc này. Vui lòng thử lại sau hoặc liên hệ quản trị viên.');
     }
     const d=await r.json().catch(()=>({}));
     if(!r.ok) {
-      const msg = typeof d.detail==='string'?d.detail:(d.detail?.message||((d.detail?.violations||[]).join('\n'))||'Yêu cầu không thành công ('+r.status+').');
-      throw new Error(msg);
+      const msg = typeof d.detail==='string'?d.detail:(d.detail?.message||((d.detail?.violations||[]).join('\n'))||'Yêu cầu không thành công.');
+      const error=new Error(friendlyError(msg, r.status));
+      error.status=r.status;
+      throw error;
     }
     return d;
   }
@@ -49,10 +55,16 @@
     if (m) m.innerHTML = '';
   }
 
+  function isNoticeRead(notice){
+    const response=String(notice.TrangThaiPhanHoiThayThe||'').toUpperCase();
+    const invitationAnswered=notice.Loai==='BusyCoverRequested'&&['ACCEPTED','DECLINED'].includes(response);
+    return Boolean(notice.DaDoc)||invitationAnswered;
+  }
+
   async function refreshBell(){
     try{
       const r=await req('/user/notifications/'+encodeURIComponent(state.user.ma_gv));
-      const n=(r.items||[]).filter(x=>!x.DaDoc).length;
+      const n=(r.items||[]).filter(x=>!isNoticeRead(x)).length;
       state.unread=n;
       [['#bellDot',n>9?'9+':n],['#navDot',n]].forEach(([q,v])=>{const e=$(q);if(e){e.textContent=v;e.hidden=!n}});
     }catch(e){}
@@ -66,7 +78,7 @@
     const nav=[
       ['schedule','Lịch gác thi',IC.cal],
       ['busy','Báo bận / Điều chỉnh',IC.clip],
-      ['swaps','Nhờ coi thay',IC.swap],
+      ['swaps','Yêu cầu thay ca',IC.swap],
       ['notices','Thông báo',IC.bell],
       ['password','Đổi mật khẩu',IC.key]
     ];
@@ -79,7 +91,7 @@
   }
 
   function loginView(){
-    $('#app').innerHTML=`<div class="login"><section class="login-art"><div class="lb">${logoMark(72)}<div class="uni">Trường Đại học Công Thương<br>Thành phố Hồ Chí Minh</div></div><div><h2>Hệ thống xếp lịch gác thi</h2><p>Tra cứu lịch gác thi cá nhân, báo bận cho quản trị viên và trao đổi đổi ca.</p></div><div class="mini" aria-hidden="true">${'<i class="a"></i>'.repeat(40)}</div></section><section class="login-form"><div><h1>Đăng nhập giảng viên</h1><p class="muted" style="margin-bottom:18px">Dùng mã giảng viên và mật khẩu do quản trị viên cấp.</p><form id="loginForm"><label class="f"><span>Mã giảng viên</span><input id="maGV" required maxlength="20" autocomplete="username"></label><label class="f"><span>Mật khẩu</span><input id="password" type="password" required autocomplete="current-password"></label><div class="err" id="error"></div><button class="btn pri" type="submit">Đăng nhập</button></form><p class="hint">Lần đầu đăng nhập, mật khẩu tạm là 1 và hệ thống bắt buộc đổi mật khẩu trước khi sử dụng.</p></div></section></div>`;
+    $('#app').innerHTML=`<div class="login"><section class="login-art"><div class="lb">${logoMark(72)}<div class="uni">Trường Đại học Công Thương<br>Thành phố Hồ Chí Minh</div></div><div><h2>Hệ thống xếp lịch gác thi</h2><p>Tra cứu lịch gác thi cá nhân, báo bận cho quản trị viên và trao đổi đổi ca.</p></div><div class="mini" aria-hidden="true">${'<i class="a"></i>'.repeat(40)}</div></section><section class="login-form"><div><h1>Đăng nhập giảng viên</h1><p class="muted" style="margin-bottom:18px">Dùng mã giảng viên và mật khẩu do quản trị viên cấp.</p><form id="loginForm"><label class="f"><span>Mã giảng viên</span><input id="maGV" required maxlength="20" autocomplete="username"></label><label class="f"><span>Mật khẩu</span><input id="password" type="password" required autocomplete="current-password"></label><div class="err" id="error"></div><button class="btn pri" type="submit">Đăng nhập</button></form><p class="hint">Lần đầu: mật khẩu tạm là 1; hệ thống sẽ yêu cầu đổi mật khẩu.</p></div></section></div>`;
     $('#loginForm').onsubmit=async e=>{
       e.preventDefault();
       const err=$('#error');
@@ -118,11 +130,22 @@
     if(!state.user)return loginView();
     try{
       if(state.page==='schedule'){
-        const [schedule, busy]=await Promise.all([
-          req('/user/schedule/'+encodeURIComponent(state.user.ma_gv)),
+        const [access, busy]=await Promise.all([
+          req('/user/schedule-access'),
           req('/user/busy-requests')
         ]);
-        state.schedule=schedule.items||[];
+        state.scheduleAccess=access;
+        const viewer=state.scheduleAccess.can_view_all?(state.scheduleViewer||'mine'):'mine';
+        const allowed=new Set((state.scheduleAccess.lecturers||[]).map(x=>String(x.MaGV).toLowerCase()));
+        state.scheduleViewer=viewer==='mine'||viewer==='all'||allowed.has(String(viewer).toLowerCase())?viewer:'mine';
+        if(state.scheduleViewer==='all'){
+          const all=await req('/user/schedules/all');
+          state.allSchedules=all.items||[];state.schedule=[];
+        }else{
+          const maGV=state.scheduleViewer==='mine'?state.user.ma_gv:state.scheduleViewer;
+          const schedule=await req('/user/schedule/'+encodeURIComponent(maGV));
+          state.schedule=schedule.items||[];state.allSchedules=[];
+        }
         state.busyRequests=busy.items||[];
       }
       if(state.page==='busy'){
@@ -157,11 +180,24 @@
   }
 
   function schedulePage(){
-    const today=new Date().toISOString().slice(0,10),list=state.schedule,up=list.filter(x=>x.NgayThi>=today).length;
-    shell(`<div class="crumb">Trang chủ / Lịch gác thi</div><header class="ph"><div><h1>Lịch gác thi của tôi</h1><p>Xem ca gác theo tuần hoặc tháng. Các đơn báo bận cũng hiện trên lịch để bạn dễ theo dõi.</p></div><div class="ph-r"><button class="btn pri" id="goBusy">${IC.clip} Báo bận ca thi</button><button class="btn" id="refresh">${IC.refresh} Làm mới dữ liệu</button></div></header><div class="stats"><div class="stat ic"><div class="si">${IC.clip}</div><div><b>${list.length}</b><span>Tổng số ca</span></div></div><div class="stat ic"><div class="si">${IC.cal}</div><div><b>${up}</b><span>Ca sắp tới</span></div></div><div class="stat ic"><div class="si">${IC.ok}</div><div><b>${list.length-up}</b><span>Ca đã qua</span></div></div></div><div class="panel lecturer-calendar-panel"><div id="scheduleCalendar"></div></div>`);
-    renderCalendarInto('#scheduleCalendar',{duties:list,busyRequests:state.busyRequests||[]});
+    const isAll=state.scheduleViewer==='all'&&state.scheduleAccess.can_view_all;
+    const isMine=state.scheduleViewer==='mine';
+    const currentId=String(state.user.ma_gv).toLowerCase();
+    const target=state.scheduleAccess.lecturers.find(x=>String(x.MaGV).toLowerCase()===String(state.scheduleViewer).toLowerCase());
+    const list=isAll?state.allSchedules:state.schedule, today=new Date().toISOString().slice(0,10),up=list.filter(x=>x.NgayThi>=today).length;
+    const title=isAll?'Lịch gác thi của tất cả giảng viên':isMine?'Lịch gác thi của tôi':`Lịch gác thi · ${target?.HoTen||state.scheduleViewer}`;
+    const options=state.scheduleAccess.can_view_all?`<label class="schedule-viewer"><span>Xem lịch</span><select id="scheduleViewer" aria-label="Chọn lịch giảng viên"><option value="mine"${isMine?' selected':''}>Lịch của tôi</option><option value="all"${isAll?' selected':''}>Tất cả giảng viên</option>${(state.scheduleAccess.lecturers||[]).filter(x=>String(x.MaGV).toLowerCase()!==currentId).map(x=>`<option value="${esc(x.MaGV)}"${String(x.MaGV).toLowerCase()===String(state.scheduleViewer).toLowerCase()?' selected':''}>${esc(x.HoTen)} · ${esc(x.MaGV)}</option>`).join('')}</select></label>`:'';
+    const body=isAll?allSchedulesTable(list):'<div id="scheduleCalendar"></div>';
+    shell(`<div class="crumb">Trang chủ / Lịch gác thi</div><header class="ph"><div><h1>${esc(title)}</h1><p>${isAll?'Chọn giảng viên để xem lịch tuần hoặc tháng.':isMine?'Xem lịch tuần/tháng; đơn báo bận cũng hiện tại đây.':'Lịch tuần/tháng của giảng viên đã chọn.'}</p></div><div class="ph-r">${options}${isMine?`<button class="btn pri" id="goBusy">${IC.clip} Báo bận ca thi</button>`:''}<button class="btn" id="refresh">${IC.refresh} Làm mới dữ liệu</button></div></header><div class="stats"><div class="stat ic"><div class="si">${IC.clip}</div><div><b>${list.length}</b><span>${isAll?'Tổng lượt phân công':'Tổng số ca'}</span></div></div><div class="stat ic"><div class="si">${IC.cal}</div><div><b>${up}</b><span>Ca sắp tới</span></div></div><div class="stat ic"><div class="si">${IC.ok}</div><div><b>${list.length-up}</b><span>Ca đã qua</span></div></div></div><div class="panel lecturer-calendar-panel">${body}</div>`);
+    if(!isAll)renderCalendarInto('#scheduleCalendar',{duties:list,busyRequests:isMine?(state.busyRequests||[]):[]});
+    const viewer=$('#scheduleViewer');if(viewer)viewer.onchange=()=>{state.scheduleViewer=viewer.value;state.calendarDate=null;renderPage()};
     $('#refresh').onclick=renderPage;
-    $('#goBusy').onclick=()=>{state.page='busy';renderPage()};
+    const goBusy=$('#goBusy');if(goBusy)goBusy.onclick=()=>{state.page='busy';renderPage()};
+  }
+
+  function allSchedulesTable(rows){
+    const body=(rows||[]).map(x=>`<tr><td>${fmt(x.NgayThi)}</td><td>${esc(x.Thu||'')} · ${esc(x.MaCa||'')}</td><td>${esc(x.TuTiet)}–${esc(x.DenTiet)}</td><td><b>${esc(x.HoTen||x.MaGV)}</b><br><span class="hint" style="margin:0">${esc(x.MaGV)}</span></td><td>${esc(x.HinhThucThi||'')}</td><td>${esc(x.PhongThi||'—')}</td></tr>`).join('');
+    return `<div class="tw"><table><thead><tr><th>Ngày thi</th><th>Ca</th><th>Tiết</th><th>Giảng viên</th><th>Hình thức</th><th>Phòng</th></tr></thead><tbody>${body||'<tr><td colspan="6" class="empty">Chưa có phân công nào.</td></tr>'}</tbody></table></div>`;
   }
 
   // Tiện ích tính giờ theo tiết học
@@ -191,12 +227,16 @@
   }
   function calendarEvents(duties,busyRequests){
     const events=[];
-    (duties||[]).forEach(x=>events.push({
-      kind:'duty',date:String(x.NgayThi||'').slice(0,10),start:tietToTime(x.TuTiet,false),end:tietToTime(x.DenTiet,true),
-      maCa:String(x.MaCa||''),title:`Ca gác thi · tiết ${x.TuTiet}–${x.DenTiet}`,
-      detail:`${LB[x.HinhThucThi]||x.HinhThucThi||'Ca thi'}${x.PhongThi?' · '+x.PhongThi:''}${x.MaCa?' · '+x.MaCa:''}`,
-      sort:Number(x.TuTiet)||0
-    }));
+    (duties||[]).forEach(x=>{
+      const examType=String(x.HinhThucThi||'').trim().toLowerCase();
+      const dutyClass=examType==='tl'||examType.includes('tự luận')?'duty-essay':'duty-theory';
+      events.push({
+        kind:'duty',dutyClass,date:String(x.NgayThi||'').slice(0,10),start:tietToTime(x.TuTiet,false),end:tietToTime(x.DenTiet,true),
+        maCa:String(x.MaCa||''),title:`Ca gác thi · tiết ${x.TuTiet}–${x.DenTiet}`,
+        detail:`${LB[x.HinhThucThi]||x.HinhThucThi||'Ca thi'}${x.PhongThi?' · '+x.PhongThi:''}${x.MaCa?' · '+x.MaCa:''}`,
+        sort:Number(x.TuTiet)||0
+      });
+    });
     (busyRequests||[]).filter(x=>['PENDING','APPROVED'].includes(String(x.TrangThai||'').toUpperCase())).forEach(x=>{
       const rawStart=String(x.ThoiGianBatDauBan||'').replace('T',' ');
       const rawEnd=String(x.ThoiGianKetThucBan||'').replace('T',' ');
@@ -214,7 +254,7 @@
   function calendarEventMarkup(event,options,month=false,overlap=false){
     const disabled=event.kind==='duty'&&options.disabledCas?.has(event.maCa);
     const selected=event.kind==='duty'&&options.selectedCa===event.maCa;
-    const statusClass=event.kind==='busy'?(event.title.includes('đã duyệt')?'busy-approved':'busy-pending'):'duty-event';
+    const statusClass=event.kind==='busy'?(event.title.includes('đã duyệt')?'busy-approved':'busy-pending'):`duty-event ${event.dutyClass||'duty-theory'}`;
     const classes=`calendar-event ${statusClass}${selected?' selected':''}${disabled?' disabled':''}${options.selectable&&event.kind==='duty'?' selectable':''}${month?' month-event':''}`;
     const title=`${event.title} · ${event.detail}`;
     const content=month?`<b>${esc(event.start)} ${esc(event.title)}</b>`:`<b>${esc(event.title)}</b><span>${esc(event.detail)}</span>`;
@@ -277,7 +317,7 @@
       }).join('');
       grid=`<div class="calendar-month-grid">${headings}${cells}</div>`;
     }
-    return `<div class="calendar-toolbar"><div class="calendar-nav"><button type="button" class="calendar-nav-btn" data-calendar-step="-1" aria-label="Khoảng trước">‹</button><button type="button" class="btn calendar-today" data-calendar-today>Hôm nay</button><button type="button" class="calendar-nav-btn" data-calendar-step="1" aria-label="Khoảng sau">›</button><strong>${esc(label)}</strong></div><div class="calendar-mode"><button type="button" class="${mode==='week'?'active':''}" data-calendar-mode="week">Tuần</button><button type="button" class="${mode==='month'?'active':''}" data-calendar-mode="month">Tháng</button></div></div><div class="calendar-legend"><span><i class="legend-duty"></i>Ca gác thi</span><span><i class="legend-pending"></i>Báo bận chờ duyệt</span><span><i class="legend-approved"></i>Báo bận đã duyệt</span></div><div class="calendar-scroll">${grid}</div>`;
+    return `<div class="calendar-toolbar"><div class="calendar-nav"><button type="button" class="calendar-nav-btn" data-calendar-step="-1" aria-label="Khoảng trước">‹</button><button type="button" class="btn calendar-today" data-calendar-today>Hôm nay</button><button type="button" class="calendar-nav-btn" data-calendar-step="1" aria-label="Khoảng sau">›</button><strong>${esc(label)}</strong></div><div class="calendar-mode"><button type="button" class="${mode==='week'?'active':''}" data-calendar-mode="week">Tuần</button><button type="button" class="${mode==='month'?'active':''}" data-calendar-mode="month">Tháng</button></div></div><div class="calendar-legend"><span><i class="legend-theory"></i>Ca lý thuyết</span><span><i class="legend-essay"></i>Ca tự luận</span><span><i class="legend-pending"></i>Báo bận chờ duyệt</span><span><i class="legend-approved"></i>Báo bận đã duyệt</span></div><div class="calendar-scroll">${grid}</div>`;
   }
   function renderCalendarInto(selector,options){
     const host=$(selector);
@@ -306,91 +346,56 @@
   // =====================================================================
   function busyPage(){
     const list = state.busyRequests || [];
-    const pendingCount = list.filter(x=>x.TrangThai==='PENDING').length;
-    const approvedCount = list.filter(x=>x.TrangThai==='APPROVED').length;
-    const rejectedCount = list.filter(x=>x.TrangThai==='REJECTED').length;
-
     // Danh sách ca thi đang phân công của GV để chọn
     const activePendingSlots = new Set(list.filter(x=>x.TrangThai==='PENDING'&&x.MaCa).map(x=>String(x.MaCa)));
 
-    // Bảng danh sách các yêu cầu báo bận đã gửi
-    const reqStatusMap = {
-      'APPROVED': ['Đã chấp nhận', 'ok'],
-      'REJECTED': ['Đã từ chối', 'bad']
-    };
-
-    const tableRows = list.map(x => {
-      const st = x.TrangThai==='PENDING'
-        ? (x.MaGVThayTheDeNghi ? ['Chờ Admin duyệt', 'warn'] : x.MaCa ? ['Chờ chọn người coi thay', 'warn'] : ['Thiếu ca cụ thể', 'bad'])
-        : (reqStatusMap[x.TrangThai] || [x.TrangThai, '']);
-      const caInfo = x.MaCa ? `<b>Ca: ${esc(x.MaCa)}</b><br><span class="hint" style="margin:0">${fmt(x.NgayThi)} · Tiết ${x.TuTiet}–${x.DenTiet}</span>` : '<span class="muted">Không gắn ca cụ thể</span>';
-      const timeRange = `${esc(x.ThoiGianBatDauBan ? x.ThoiGianBatDauBan.replace('T',' ') : '')}<br>đến ${esc(x.ThoiGianKetThucBan ? x.ThoiGianKetThucBan.replace('T',' ') : '')}`;
-      
-      let updateInfo = '<span class="muted">—</span>';
-      if (x.TrangThai === 'PENDING' && x.MaGVThayTheDeNghi) {
-        updateInfo = `<b>${esc(x.TenGVThayTheDeNghi || x.MaGVThayTheDeNghi)}</b><br><span class="hint" style="margin:0">Đã gửi Admin duyệt</span>`;
-      } else if (x.TrangThai === 'APPROVED') {
-        updateInfo = `<span style="color:var(--ok);font-weight:600">Đã điều chỉnh lịch</span><br><span class="hint" style="margin:0">GV thay thế: ${esc(x.TenGVThayThe || x.MaGVThayThe || 'Đã phân công lại')}</span>`;
-      } else if (x.TrangThai === 'REJECTED') {
-        updateInfo = `<span style="color:var(--bad);font-weight:500">Giữ nguyên lịch</span><br><span class="hint" style="margin:0">Lý do: ${esc(x.LyDoTuChoi || 'Không nêu')}</span>`;
-      }
-
-      return `<tr>
-        <td><b>#${x.MaYeuCau}</b></td>
-        <td>${caInfo}</td>
-        <td><small>${timeRange}</small></td>
-        <td><b>${esc(x.LyDoBaoBan)}</b>${x.GhiChuGV ? `<br><span class="hint" style="margin:0">${esc(x.GhiChuGV)}</span>` : ''}</td>
-        <td><span class="chip ${st[1]}">${esc(st[0])}</span></td>
-        <td><small>${x.ThoiGianGui ? x.ThoiGianGui.replace('T',' ') : ''}</small></td>
-        <td>${updateInfo}</td>
-        <td>${x.TrangThai==='PENDING'&&!x.MaGVThayTheDeNghi&&x.MaCa?`<button class="btn sm pri" data-cover-request="${x.MaYeuCau}">Chọn người coi thay</button> `:''}<button class="btn sm" data-view-busy="${x.MaYeuCau}">Chi tiết</button></td>
-      </tr>`;
-    }).join('');
-
     shell(`
-      <div class="crumb">Trang chủ / Báo bận & Điều chỉnh lịch</div>
+      <div class="crumb">Trang chủ / Báo bận và Điều chỉnh lịch</div>
       <header class="ph">
         <div>
           <h1>Báo bận / Yêu cầu điều chỉnh lịch coi thi</h1>
-          <p>Lưu đơn báo bận trước, sau đó chọn một giảng viên đủ điều kiện coi thay. Admin sẽ xem cả người được nhờ và quyết định cập nhật lịch.</p>
+      <p>Chọn ca, nhập lý do và mời người nhận thay. Đơn tới Admin sau khi họ đồng ý; theo dõi hoặc rút đơn tại “Yêu cầu thay ca”.</p>
         </div>
         <div class="ph-r">
           <button class="btn pri" id="refreshBusy">${IC.refresh} Làm mới dữ liệu</button>
         </div>
       </header>
 
-      <div class="stats">
-        <div class="stat ic"><div class="si">${IC.clip}</div><div><b>${list.length}</b><span>Tổng yêu cầu</span></div></div>
-        <div class="stat ic"><div class="si">${IC.warn}</div><div><b>${pendingCount}</b><span>Chờ chọn người / Admin</span></div></div>
-        <div class="stat ic"><div class="si">${IC.ok}</div><div><b>${approvedCount}</b><span>Đã chấp nhận</span></div></div>
-        <div class="stat ic"><div class="si">${IC.bad}</div><div><b>${rejectedCount}</b><span>Đã từ chối</span></div></div>
-      </div>
-
       <div class="panel lecturer-calendar-panel busy-calendar-panel">
         <h2>Lịch gác thi và báo bận</h2>
-        <p class="sub">Chọn một ca màu xanh trên lịch để tạo yêu cầu báo bận. Ca đã có yêu cầu chờ xử lý sẽ bị khóa chọn.</p>
+        <p class="sub">Lý thuyết màu trắng, tự luận màu xanh lá. Ca đang chờ xử lý sẽ bị khóa.</p>
         <div id="busyCalendar"></div>
       </div>
 
       <div class="u-grid">
         <form class="panel" id="busyForm">
           <h2>Gửi yêu cầu báo bận mới</h2>
-          <p class="sub">Nhấn vào ca gác thi trên lịch phía trên. Sau đó nhập thời gian và lý do báo bận.</p>
+          <p class="sub">Chọn ca, điền thông tin và mời giảng viên thay.</p>
           <label class="f busy-selected-field"><span>Ca gác thi đã chọn</span><input type="hidden" id="busyCa"><b id="busySelectedLabel">Chưa chọn ca trên lịch</b></label>
+
+          <label class="f" style="margin-top:12px">
+            <span>2. Giảng viên được nhờ coi thay <b style="color:var(--bad)" id="busyNomineeRequired">*</b></span>
+            <div class="searchable-picker" id="busyNomineePicker">
+              <input type="search" id="busyNomineeSearch" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="busyNomineeOptions" autocomplete="off" placeholder="Chọn hoặc tìm giảng viên đủ điều kiện" disabled>
+              <div class="searchable-options" id="busyNomineeOptions" role="listbox" hidden></div>
+            </div>
+            <input type="hidden" id="busyNominee">
+            <small class="hint" id="busyNomineeHint" style="display:block;margin-top:5px">Chọn ca để xem người đủ điều kiện.</small>
+          </label>
 
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
             <label class="f">
-              <span>2. Thời gian bắt đầu bận <b style="color:var(--bad)">*</b></span>
+              <span>3. Thời gian bắt đầu bận <b style="color:var(--bad)">*</b></span>
               <input type="datetime-local" id="busyStart" required>
             </label>
             <label class="f">
-              <span>3. Thời gian kết thúc bận <b style="color:var(--bad)">*</b></span>
+              <span>4. Thời gian kết thúc bận <b style="color:var(--bad)">*</b></span>
               <input type="datetime-local" id="busyEnd" required>
             </label>
           </div>
 
           <label class="f" style="margin-top:8px">
-            <span>4. Lý do báo bận <b style="color:var(--bad)">*</b></span>
+            <span>5. Lý do báo bận <b style="color:var(--bad)">*</b></span>
             <select id="busyReasonSelect">
               <option value="">-- Chọn lý do thường gặp hoặc tự nhập bên dưới --</option>
               <option value="Đi công tác, họp theo quyết định của Trường">Đi công tác, họp theo quyết định của Trường</option>
@@ -403,13 +408,13 @@
           <input type="text" id="busyReasonCustom" placeholder="Hoặc nhập lý do chi tiết..." required style="margin-top:6px">
 
           <label class="f" style="margin-top:8px">
-            <span>5. Ghi chú cho Admin và người được nhờ <small>(không bắt buộc)</small></span>
+            <span>6. Ghi chú cho Admin và người được nhờ <small>(không bắt buộc)</small></span>
             <textarea id="busyNote" rows="2" maxlength="500" placeholder="Thông tin chi tiết hỗ trợ Admin sắp xếp phương án thay thế..."></textarea>
           </label>
 
           <div class="err" id="busyErr" role="alert"></div>
           <button class="btn pri" type="submit" id="btnSubmitBusy" style="margin-top:12px">
-            ${IC.send} Lưu đơn & chọn người coi thay
+            ${IC.send} Gửi yêu cầu coi thay
           </button>
         </form>
 
@@ -427,37 +432,25 @@
             <small>Lý do</small>
             <b id="pvBusyReason">Chưa nhập lý do</b>
           </div>
+          <div class="box" style="margin-top:10px">
+            <small>Giảng viên được nhờ</small>
+            <b id="pvBusyNominee">Chưa chọn giảng viên</b>
+          </div>
           <p class="hint" style="margin-top:14px">
-            Sau khi lưu đơn, bạn sẽ chọn người coi thay. Người được nhờ và Admin nhận thông báo; lịch chính thức chỉ đổi khi Admin chấp nhận.
+            Người nhận đồng ý trước; Admin duyệt mới đổi lịch.
           </p>
         </aside>
       </div>
 
-      <div class="panel" style="margin-top:18px">
-        <h2>Danh sách yêu cầu báo bận đã gửi</h2>
-        <div class="tw">
-          <table>
-            <thead>
-              <tr>
-                <th>Mã YC</th>
-                <th>Ca thi liên quan</th>
-                <th>Thời gian bận</th>
-                <th>Lý do & Ghi chú</th>
-                <th>Trạng thái</th>
-                <th>Thời gian gửi</th>
-                <th>Người được nhờ / Kết quả</th>
-                <th>Thao tác</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${tableRows || '<tr><td colspan="8" class="empty">Bạn chưa gửi yêu cầu báo bận nào.</td></tr>'}
-            </tbody>
-          </table>
-        </div>
-      </div>
     `);
 
     const form = $('#busyForm');
+    const nomineeSelect=$('#busyNominee');
+    const nomineeSearch=$('#busyNomineeSearch');
+    const nomineePicker=$('#busyNomineePicker');
+    const nomineeOptions=$('#busyNomineeOptions');
+    let coverCandidates=[],coverCandidatesLoading=false,coverCandidatesRequest=0;
+    let visibleCoverCandidates=[],activeNomineeIndex=-1;
     const updatePreview = () => {
       const selected = state.schedule.find(x=>String(x.MaCa)===String(state.selectedBusyCa||''));
       if (selected && selected.MaCa) {
@@ -476,6 +469,93 @@
 
       const r = $('#busyReasonCustom').value.trim() || $('#busyReasonSelect').value;
       $('#pvBusyReason').textContent = r || 'Chưa nhập lý do';
+      const nominee=coverCandidates.find(x=>String(x.MaGV)===String(nomineeSelect.value));
+      $('#pvBusyNominee').textContent=nominee?`${nominee.HoTen} (${nominee.MaGV})`:'Chưa chọn giảng viên';
+    };
+
+    const searchKey=value=>String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[đĐ]/g,'d').toLocaleLowerCase();
+    const nomineeLabel=x=>`${x.HoTen} (${x.MaGV}) · ${x.TenBoMon||''}`;
+    const closeNomineeOptions=()=>{
+      nomineeOptions.hidden=true;nomineeSearch.setAttribute('aria-expanded','false');
+      nomineeSearch.removeAttribute('aria-activedescendant');activeNomineeIndex=-1;
+    };
+    const renderNomineeOptions=()=>{
+      const selected=coverCandidates.find(x=>String(x.MaGV)===String(nomineeSelect.value));
+      const typed=nomineeSearch.value.trim();
+      const query=searchKey(selected&&typed===nomineeLabel(selected)?'':typed);
+      visibleCoverCandidates=coverCandidates.filter(x=>searchKey(`${x.HoTen||''} ${x.MaGV||''} ${x.TenBoMon||''}`).includes(query));
+      activeNomineeIndex=-1;
+      nomineeOptions.innerHTML=visibleCoverCandidates.length
+        ?visibleCoverCandidates.map((x,i)=>`<button type="button" id="busyNomineeOption${i}" class="searchable-option" role="option" aria-selected="${String(x.MaGV)===String(nomineeSelect.value)}" data-nominee="${esc(x.MaGV)}">${esc(nomineeLabel(x))}</button>`).join('')
+        :'<div class="searchable-empty">Không tìm thấy giảng viên phù hợp.</div>';
+      $('#busyNomineeHint').textContent=visibleCoverCandidates.length
+        ?'Chỉ hiện người đủ điều kiện. Đơn tới Admin sau khi họ đồng ý.'
+        :'Không tìm thấy tên phù hợp. Thử từ khóa khác.';
+    };
+    const openNomineeOptions=()=>{
+      if(nomineeSearch.disabled||!coverCandidates.length)return;
+      renderNomineeOptions();nomineeOptions.hidden=false;nomineeSearch.setAttribute('aria-expanded','true');
+    };
+    const chooseNominee=maGV=>{
+      const selected=coverCandidates.find(x=>String(x.MaGV)===String(maGV));
+      if(!selected)return;
+      nomineeSelect.value=String(selected.MaGV);nomineeSearch.value=nomineeLabel(selected);
+      $('#busyNomineeHint').textContent='Chỉ hiện người đủ điều kiện. Đơn tới Admin sau khi họ đồng ý.';
+      closeNomineeOptions();updatePreview();
+    };
+    const setActiveNominee=index=>{
+      const options=nomineeOptions.querySelectorAll('[role="option"]');
+      if(!options.length)return;
+      activeNomineeIndex=Math.max(0,Math.min(index,options.length-1));
+      options.forEach((option,i)=>option.classList.toggle('active',i===activeNomineeIndex));
+      const active=options[activeNomineeIndex];
+      nomineeSearch.setAttribute('aria-activedescendant',active.id);active.scrollIntoView({block:'nearest'});
+    };
+    nomineeSearch.onfocus=()=>{if(nomineeSelect.value)nomineeSearch.select();openNomineeOptions()};
+    nomineeSearch.oninput=()=>{nomineeSelect.value='';openNomineeOptions();updatePreview()};
+    nomineeSearch.onkeydown=e=>{
+      if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+        e.preventDefault();if(nomineeOptions.hidden)openNomineeOptions();
+        setActiveNominee(activeNomineeIndex+(e.key==='ArrowDown'?1:-1));
+      }else if(e.key==='Enter'&&!nomineeOptions.hidden){
+        e.preventDefault();
+        const index=activeNomineeIndex>=0?activeNomineeIndex:visibleCoverCandidates.length===1?0:-1;
+        if(index>=0)chooseNominee(visibleCoverCandidates[index].MaGV);
+      }else if(e.key==='Escape'&&!nomineeOptions.hidden){e.preventDefault();closeNomineeOptions()}
+    };
+    nomineeOptions.addEventListener('mousedown',e=>{if(e.target.closest('[data-nominee]'))e.preventDefault()});
+    nomineeOptions.addEventListener('click',e=>{const option=e.target.closest('[data-nominee]');if(option)chooseNominee(option.dataset.nominee)});
+    nomineePicker.addEventListener('focusout',()=>setTimeout(()=>{if(!nomineePicker.contains(document.activeElement))closeNomineeOptions()},0));
+
+    const loadCoverCandidates=async maCa=>{
+      const requestId=++coverCandidatesRequest;
+      coverCandidates=[];visibleCoverCandidates=[];coverCandidatesLoading=!!maCa;nomineeSelect.value='';
+      nomineeSearch.value='';nomineeSearch.disabled=true;
+      nomineeSearch.placeholder=maCa?'Đang kiểm tra giảng viên phù hợp…':'Chọn ca trên lịch trước';
+      nomineeOptions.innerHTML='';closeNomineeOptions();
+      $('#busyNomineeRequired').hidden=true;
+      $('#busyNomineeHint').textContent=maCa?'Đang kiểm tra lịch và định mức…':'Chọn ca để xem người đủ điều kiện.';
+      updatePreview();
+      if(!maCa)return;
+      try{
+        const response=await req('/user/busy-cover-candidates?ma_ca='+encodeURIComponent(maCa));
+        if(requestId!==coverCandidatesRequest)return;
+        coverCandidates=response.candidates||[];coverCandidatesLoading=false;
+        if(coverCandidates.length){
+          nomineeSearch.disabled=false;nomineeSearch.placeholder='Chọn hoặc tìm giảng viên đủ điều kiện';$('#busyNomineeRequired').hidden=false;
+          renderNomineeOptions();
+        }else{
+          nomineeSearch.placeholder='Chưa có giảng viên đủ điều kiện';
+          $('#busyNomineeHint').textContent='Chưa có người phù hợp. Bạn có thể chọn người thay sau.';
+        }
+        updatePreview();
+      }catch(error){
+        if(requestId!==coverCandidatesRequest)return;
+        coverCandidatesLoading=false;
+        nomineeSearch.placeholder='Không tải được danh sách giảng viên';
+        $('#busyNomineeHint').textContent='Không tải được danh sách. Bạn có thể chọn người thay sau.';
+        updatePreview();
+      }
     };
 
     const calendarOptions={
@@ -494,6 +574,7 @@
         $('#busySelectedLabel').textContent=`${selected.Thu||''}, ${fmt(selected.NgayThi)} · Tiết ${selected.TuTiet}–${selected.DenTiet} (${selected.MaCa})`;
         $('#busyStart').value=start;
         $('#busyEnd').value=end;
+        loadCoverCandidates(state.selectedBusyCa);
         updatePreview();
         calendarOptions.selectedCa=state.selectedBusyCa;
         renderCalendarInto('#busyCalendar',calendarOptions);
@@ -508,6 +589,7 @@
         $('#busySelectedLabel').textContent=`${previous.Thu||''}, ${fmt(previous.NgayThi)} · Tiết ${previous.TuTiet}–${previous.DenTiet} (${previous.MaCa})`;
         $('#busyStart').value=`${String(previous.NgayThi).slice(0,10)}T${tietToTime(previous.TuTiet,false)}`;
         $('#busyEnd').value=`${String(previous.NgayThi).slice(0,10)}T${tietToTime(previous.DenTiet,true)}`;
+        loadCoverCandidates(String(previous.MaCa));
       }else state.selectedBusyCa=null;
     }
     updatePreview();
@@ -522,6 +604,7 @@
     $('#busyStart').oninput = updatePreview;
     $('#busyEnd').oninput = updatePreview;
     $('#busyReasonCustom').oninput = updatePreview;
+    nomineeSearch.onchange=updatePreview;
 
     // Gửi form báo bận
     form.onsubmit = async e => {
@@ -534,6 +617,7 @@
       const en = $('#busyEnd').value;
       const reason = $('#busyReasonCustom').value.trim();
       const note = $('#busyNote').value.trim();
+      const nominee = nomineeSelect.value.trim() || null;
 
       if (!st || !en) {
         errEl.textContent = 'Vui lòng chọn thời gian bắt đầu và kết thúc bận.';
@@ -551,10 +635,12 @@
         errEl.textContent = 'Vui lòng nhập lý do báo bận.';
         return;
       }
+      if(coverCandidatesLoading){errEl.textContent='Đang tải danh sách giảng viên phù hợp. Vui lòng chờ một chút.';return}
+      if(coverCandidates.length&&!nominee){errEl.textContent='Vui lòng chọn giảng viên được nhờ coi thay.';nomineeSearch.focus();openNomineeOptions();return}
 
       const btn = $('#btnSubmitBusy');
       btn.disabled = true;
-      btn.textContent = 'Đang lưu đơn...';
+      btn.textContent = 'Đang gửi đơn và lời mời...';
 
       try {
         const saved = await req('/user/busy-requests', {
@@ -564,137 +650,99 @@
             thoi_gian_bat_dau: st,
             thoi_gian_ket_thuc: en,
             ly_do: reason,
-            ghi_chu: note || null
+            ghi_chu: note || null,
+            ma_gv_thay_the: nominee
           })
         });
-        state.pendingCoverId = saved.ma_yeu_cau;
-        state.page = 'swaps';
-        toast('Đã lưu đơn báo bận. Chọn người coi thay để gửi Admin duyệt.');
+        state.selectedBusyCa=null;
+        toast(saved.message||'Đã gửi đơn báo bận.');
         await renderPage();
       } catch (err) {
         errEl.textContent = err.message;
         btn.disabled = false;
-        btn.innerHTML = `${IC.send} Lưu đơn & chọn người coi thay`;
+        btn.innerHTML = `${IC.send} Gửi yêu cầu coi thay`;
       }
     };
-
-    // Xem chi tiết yêu cầu
-    document.querySelectorAll('[data-cover-request]').forEach(b => {
-      b.onclick = () => openCoverChooser(b.dataset.coverRequest);
-    });
-    document.querySelectorAll('[data-view-busy]').forEach(b => {
-      b.onclick = async () => {
-        const id = b.dataset.viewBusy;
-        try {
-          const d = await req('/user/busy-requests/' + encodeURIComponent(id));
-          const st = d.TrangThai==='PENDING'
-            ? (d.MaGVThayTheDeNghi ? ['Chờ Admin duyệt', 'warn'] : d.MaCa ? ['Chờ chọn người coi thay', 'warn'] : ['Thiếu ca cụ thể', 'bad'])
-            : (reqStatusMap[d.TrangThai] || [d.TrangThai, '']);
-          let historyHtml = '';
-          if (d.history && d.history.length) {
-            historyHtml = `<div class="panel" style="margin-top:12px;background:var(--sub)">
-              <b>Lịch sử điều chỉnh lịch coi thi</b>
-              ${d.history.map(h => `<div style="font-size:13px;margin-top:6px;padding:6px 0;border-bottom:1px dashed var(--line)">
-                <div><b>Hành động:</b> ${esc(h.HanhDong)} (${esc(h.ThoiDiem)})</div>
-                <div><b>Trước:</b> ${esc(h.PhanCongTruoc)}</div>
-                <div><b>Sau:</b> <span style="color:var(--ok);font-weight:600">${esc(h.PhanCongSau)}</span></div>
-                <div><b>Người thực hiện:</b> ${esc(h.NguoiThucHien)}</div>
-                ${h.LyDo ? `<div><b>Ghi chú:</b> ${esc(h.LyDo)}</div>` : ''}
-              </div>`).join('')}
-            </div>`;
-          }
-
-          openUserModal({
-            title: `Chi tiết yêu cầu báo bận #${d.MaYeuCau}`,
-            wide: true,
-            body: `
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-                <div>
-                  <small class="muted">Trạng thái:</small><br>
-                  <span class="chip ${st[1]}">${esc(st[0])}</span>
-                </div>
-                <div>
-                  <small class="muted">Thời gian gửi:</small><br>
-                  <b>${esc(d.ThoiGianGui ? d.ThoiGianGui.replace('T',' ') : '—')}</b>
-                </div>
-              </div>
-
-              <div style="margin-top:12px">
-                <small class="muted">Ca thi liên quan:</small><br>
-                ${d.MaCa ? `<b>${esc(d.MaCa)}</b> (${fmt(d.NgayThi)}, tiết ${d.TuTiet}–${d.DenTiet}, phòng ${esc(d.PhongThi||'—')})` : '<i>Không gắn ca cụ thể</i>'}
-              </div>
-
-              <div style="margin-top:12px">
-                <small class="muted">Thời gian bận:</small><br>
-                <b>${esc(d.ThoiGianBatDauBan ? d.ThoiGianBatDauBan.replace('T',' ') : '')}</b> đến <b>${esc(d.ThoiGianKetThucBan ? d.ThoiGianKetThucBan.replace('T',' ') : '')}</b>
-              </div>
-
-              <div style="margin-top:12px">
-                <small class="muted">Lý do báo bận:</small><br>
-                <b>${esc(d.LyDoBaoBan)}</b>
-              </div>
-
-              ${d.MaGVThayTheDeNghi ? `<div style="margin-top:12px"><small class="muted">Giảng viên được nhờ coi thay:</small><br><b>${esc(d.TenGVThayTheDeNghi||d.MaGVThayTheDeNghi)}</b> (${esc(d.MaGVThayTheDeNghi)})</div>` : ''}
-
-              ${d.GhiChuGV ? `<div style="margin-top:12px"><small class="muted">Ghi chú của giảng viên:</small><br>${esc(d.GhiChuGV)}</div>` : ''}
-
-              <div style="margin-top:16px;padding:12px;border-radius:8px;background:var(--sub)">
-                <b>Kết quả xử lý từ Admin</b><br>
-                ${d.TrangThai === 'PENDING' ? (d.MaGVThayTheDeNghi ? '<span class="muted">Đã gửi người được nhờ và đang chờ quản trị viên xem xét.</span>' : '<span class="muted">Đơn đã lưu. Hãy vào mục “Nhờ coi thay” để chọn giảng viên đủ điều kiện.</span>') : ''}
-                ${d.TrangThai === 'APPROVED' ? `<div style="color:var(--ok);margin-top:6px">
-                  <b>ĐÃ CHẤP NHẬN:</b> Ca coi thi đã được điều chỉnh thành công.<br>
-                  Người xử lý: <b>${esc(d.NguoiXuLy||'Admin')}</b> lúc ${esc(d.ThoiGianXuLy?d.ThoiGianXuLy.replace('T',' '):'—')}<br>
-                  ${d.GhiChuAdmin ? `Ghi chú Admin: <i>${esc(d.GhiChuAdmin)}</i>` : ''}
-                </div>` : ''}
-                ${d.TrangThai === 'REJECTED' ? `<div style="color:var(--bad);margin-top:6px">
-                  <b>ĐÃ TỪ CHỐI:</b> Lịch coi thi hiện tại được giữ nguyên.<br>
-                  Lý do từ chối: <b style="color:var(--bad)">${esc(d.LyDoTuChoi||'Không nêu')}</b><br>
-                  Người xử lý: <b>${esc(d.NguoiXuLy||'Admin')}</b> lúc ${esc(d.ThoiGianXuLy?d.ThoiGianXuLy.replace('T',' '):'—')}<br>
-                  ${d.GhiChuAdmin ? `Ghi chú Admin: <i>${esc(d.GhiChuAdmin)}</i>` : ''}
-                </div>` : ''}
-              </div>
-
-              ${historyHtml}
-            `,
-            foot: '<button class="btn" id="btnCloseDetail">Đóng</button>'
-          });
-          $('#btnCloseDetail').onclick = closeUserModal;
-        } catch (ex) {
-          toast(ex.message);
-        }
-      };
-    });
 
     $('#refreshBusy').onclick = renderPage;
   }
 
+  async function openBusyRequestDetail(id){
+    try{
+      const d=await req('/user/busy-requests/'+encodeURIComponent(id));
+      const statusMap={PENDING:d.MaGVThayTheDeNghi?(d.TrangThaiXacNhanThayThe==='ACCEPTED'?['Chờ Admin duyệt','warn']:d.TrangThaiXacNhanThayThe==='DECLINED'?['Người được nhờ từ chối','bad']:['Chờ người được nhờ đồng ý','warn']):['Chờ chọn người coi thay','warn'],APPROVED:['Đã chấp nhận','ok'],REJECTED:['Đã từ chối','bad'],WITHDRAWN:['Đã rút đơn','']};
+      const st=statusMap[d.TrangThai]||[d.TrangThai,''];
+      const nomineeStatus=d.TrangThaiXacNhanThayThe==='ACCEPTED'?'Người được nhờ đã đồng ý; đơn chờ Admin duyệt.':d.TrangThaiXacNhanThayThe==='DECLINED'?'Người được nhờ từ chối; hãy chọn người khác.':d.TrangThaiXacNhanThayThe==='WITHDRAWN'?'Lời mời đã được thu hồi.':'Đang chờ người được nhờ phản hồi.';
+      const result=d.TrangThai==='WITHDRAWN'?'Người gửi đã rút đơn. Lịch coi thi được giữ nguyên.':d.TrangThai==='PENDING'?nomineeStatus:d.TrangThai==='APPROVED'?`Đã điều chỉnh lịch. Giảng viên thay thế: ${d.TenGVThayThe||d.MaGVThayThe||'đã phân công lại'}.`:d.TrangThai==='REJECTED'?`Lịch được giữ nguyên. Lý do Admin từ chối: ${d.LyDoTuChoi||'Không nêu'}.`:'';
+      const history=(d.history||[]).map(h=>`<div style="font-size:13px;margin-top:6px;padding:6px 0;border-bottom:1px dashed var(--line)"><div><b>${esc(h.HanhDong||'Điều chỉnh')}</b> · ${esc(h.ThoiDiem||'')}</div><div>Trước: ${esc(h.PhanCongTruoc||'—')}</div><div>Sau: ${esc(h.PhanCongSau||'—')}</div><div>Người thực hiện: ${esc(h.NguoiThucHien||'—')}</div>${h.LyDo?`<div>Ghi chú: ${esc(h.LyDo)}</div>`:''}</div>`).join('');
+      openUserModal({title:`Chi tiết yêu cầu #${d.MaYeuCau}`,wide:true,body:`
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><div><small class="muted">Trạng thái</small><br><span class="chip ${st[1]}">${esc(st[0])}</span></div><div><small class="muted">Thời gian gửi</small><br><b>${esc(d.ThoiGianGui?d.ThoiGianGui.replace('T',' '):'—')}</b></div></div>
+        <div style="margin-top:12px"><small class="muted">Ca thi liên quan</small><br>${d.MaCa?`<b>${esc(d.MaCa)}</b> (${fmt(d.NgayThi)}, tiết ${d.TuTiet}–${d.DenTiet}, phòng ${esc(d.PhongThi||'—')})`:'Không gắn ca cụ thể'}</div>
+        <div style="margin-top:12px"><small class="muted">Thời gian bận</small><br><b>${esc(d.ThoiGianBatDauBan?d.ThoiGianBatDauBan.replace('T',' '):'')}</b> đến <b>${esc(d.ThoiGianKetThucBan?d.ThoiGianKetThucBan.replace('T',' '):'')}</b></div>
+        <div style="margin-top:12px"><small class="muted">Lý do báo bận</small><br><b>${esc(d.LyDoBaoBan||'—')}</b></div>
+        ${d.MaGVThayTheDeNghi?`<div style="margin-top:12px"><small class="muted">Giảng viên được nhờ</small><br><b>${esc(d.TenGVThayTheDeNghi||d.MaGVThayTheDeNghi)}</b> (${esc(d.MaGVThayTheDeNghi)}) · ${esc(nomineeStatus)}</div>`:''}
+        ${d.GhiChuGV?`<div style="margin-top:12px"><small class="muted">Ghi chú</small><br>${esc(d.GhiChuGV)}</div>`:''}
+        ${result?`<div class="panel" style="margin-top:14px;background:var(--sub)"><b>Kết quả</b><br>${esc(result)}${d.LyDoTuChoi?`<br>Lý do: ${esc(d.LyDoTuChoi)}`:''}${d.NguoiXuLy?`<br>Người xử lý: ${esc(d.NguoiXuLy)}`:''}${d.ThoiGianXuLy?` · ${esc(d.ThoiGianXuLy.replace('T',' '))}`:''}</div>`:''}
+        ${history?`<div class="panel" style="margin-top:12px"><b>Lịch sử điều chỉnh lịch coi thi</b>${history}</div>`:''}`,
+        foot:'<button class="btn" id="closeBusyDetail">Đóng</button>'});
+      $('#closeBusyDetail').onclick=closeUserModal;
+    }catch(e){toast(e.message)}
+  }
+
   function swapsPage(){
     const list=state.busyRequests||[];
-    const pending=list.filter(x=>x.TrangThai==='PENDING');
+    const pendingCount=list.filter(x=>x.TrangThai==='PENDING').length;
+    const approvedCount=list.filter(x=>x.TrangThai==='APPROVED').length;
+    const rejectedCount=list.filter(x=>x.TrangThai==='REJECTED').length;
+    const withdrawnCount=list.filter(x=>x.TrangThai==='WITHDRAWN').length;
+    const reqStatusMap={'APPROVED':['Đã chấp nhận','ok'],'REJECTED':['Đã từ chối','bad'],'WITHDRAWN':['Đã rút đơn','']};
     const rows=list.map(x=>{
       const st=x.TrangThai==='PENDING'
-        ? (x.MaGVThayTheDeNghi?['Đã gửi Admin duyệt','warn']:x.MaCa?['Cần chọn người coi thay','warn']:['Thiếu ca cụ thể','bad'])
-        : x.TrangThai==='APPROVED'?['Đã được duyệt','ok']:['Bị từ chối','bad'];
-      const ca=x.MaCa?`${fmt(x.NgayThi)} · tiết ${x.TuTiet}–${x.DenTiet} · ${esc(x.MaCa)}`:'Chưa gắn ca thi';
-      const nominee=x.TenGVThayTheDeNghi||x.MaGVThayTheDeNghi||'—';
-      const action=x.TrangThai==='PENDING'&&!x.MaGVThayTheDeNghi&&x.MaCa
-        ? `<button class="btn sm pri" data-cover-request="${x.MaYeuCau}">Chọn giảng viên</button>`
-        : x.TrangThai==='PENDING'&&!x.MaCa?'<span class="muted">Đơn cũ chưa gắn ca thi</span>':'<span class="muted">—</span>';
-      return `<tr><td><b>#${x.MaYeuCau}</b></td><td>${ca}</td><td>${esc(x.LyDoBaoBan||'—')}</td><td>${esc(nominee)}</td><td><span class="chip ${st[1]}">${st[0]}</span></td><td>${action}</td></tr>`;
+        ? (x.MaGVThayTheDeNghi?(x.TrangThaiXacNhanThayThe==='ACCEPTED'?['Chờ Admin duyệt','warn']:x.TrangThaiXacNhanThayThe==='DECLINED'?['Người được nhờ từ chối','bad']:['Chờ người được nhờ đồng ý','warn']):x.MaCa?['Chờ chọn người coi thay','warn']:['Thiếu ca cụ thể','bad'])
+        : (reqStatusMap[x.TrangThai]||[x.TrangThai,'']);
+      const caInfo=x.MaCa?`<b>Ca: ${esc(x.MaCa)}</b><br><span class="hint" style="margin:0">${fmt(x.NgayThi)} · Tiết ${x.TuTiet}–${x.DenTiet}</span>`:'<span class="muted">Không gắn ca cụ thể</span>';
+      const timeRange=`${esc(x.ThoiGianBatDauBan?x.ThoiGianBatDauBan.replace('T',' '):'')}<br>đến ${esc(x.ThoiGianKetThucBan?x.ThoiGianKetThucBan.replace('T',' '):'')}`;
+      let outcome='<span class="muted">—</span>';
+      if(x.TrangThai==='PENDING'&&x.MaGVThayTheDeNghi){
+        const response=x.TrangThaiXacNhanThayThe==='ACCEPTED'?'Đã đồng ý · chờ Admin duyệt':x.TrangThaiXacNhanThayThe==='DECLINED'?'Đã từ chối · cần chọn người khác':'Đang chờ phản hồi';
+        outcome=`<b>${esc(x.TenGVThayTheDeNghi||x.MaGVThayTheDeNghi)}</b><br><span class="hint" style="margin:0">${response}</span>`;
+      }else if(x.TrangThai==='APPROVED'){
+        outcome=`<span style="color:var(--ok);font-weight:600">Đã điều chỉnh lịch</span><br><span class="hint" style="margin:0">GV thay thế: ${esc(x.TenGVThayThe||x.MaGVThayThe||'Đã phân công lại')}</span>`;
+      }else if(x.TrangThai==='REJECTED'){
+        outcome=`<span style="color:var(--bad);font-weight:500">Giữ nguyên lịch</span><br><span class="hint" style="margin:0">Lý do: ${esc(x.LyDoTuChoi||'Không nêu')}</span>`;
+      }else if(x.TrangThai==='WITHDRAWN'){
+        outcome='<span class="muted">Lịch được giữ nguyên</span>';
+      }
+      const canChooseReplacement=!x.MaGVThayTheDeNghi||['PENDING','DECLINED','ACCEPTED'].includes(x.TrangThaiXacNhanThayThe);
+      const action=`<div class="request-actions">${x.TrangThai==='PENDING'&&canChooseReplacement&&x.MaCa?`<button class="btn sm pri" data-cover-request="${x.MaYeuCau}">${['PENDING','ACCEPTED'].includes(x.TrangThaiXacNhanThayThe)?'Đổi người được nhờ':x.MaGVThayTheDeNghi?'Chọn người khác':'Chọn người coi thay'}</button>`:''}${x.TrangThai==='PENDING'&&Number(x.CoTheNhacThay)===1?`<button class="btn sm" data-remind-cover="${x.MaYeuCau}">Nhắc phản hồi</button>`:''}${x.TrangThai==='PENDING'?`<button class="btn sm danger" data-withdraw-busy="${x.MaYeuCau}">Rút đơn</button>`:''}<button class="btn sm" data-view-busy="${x.MaYeuCau}">Chi tiết</button></div>`;
+      return `<tr><td><b>#${x.MaYeuCau}</b></td><td>${caInfo}</td><td><small>${timeRange}</small></td><td><b>${esc(x.LyDoBaoBan||'—')}</b>${x.GhiChuGV?`<br><span class="hint" style="margin:0">${esc(x.GhiChuGV)}</span>`:''}</td><td><span class="chip ${st[1]}">${esc(st[0])}</span></td><td><small>${esc(x.ThoiGianGui?x.ThoiGianGui.replace('T',' '):'')}</small></td><td>${outcome}</td><td>${action}</td></tr>`;
     }).join('');
-    shell(`<div class="crumb">Trang chủ / Nhờ coi thay</div>
-      <header class="ph"><div><h1>Nhờ giảng viên coi thay</h1><p>Đơn báo bận đã lưu sẽ xuất hiện tại đây. Chỉ các giảng viên đủ điều kiện RB1–RB6 cho đúng ca mới được chọn.</p></div><div class="ph-r"><button class="btn pri" id="refreshCover">${IC.refresh} Làm mới dữ liệu</button></div></header>
-      <div class="u-steps"><div class="u-step on"><i>1</i><div><b>Lưu đơn báo bận</b><span>Chọn ca cụ thể cần thay</span></div></div><div class="u-step on"><i>2</i><div><b>Chọn người coi thay</b><span>Chỉ hiện người đủ điều kiện</span></div></div><div class="u-step"><i>3</i><div><b>Admin duyệt</b><span>Lịch chỉ đổi sau khi Admin chấp nhận</span></div></div></div>
-      <div class="panel"><h2>Đơn báo bận và yêu cầu coi thay</h2><p class="sub">Sau khi gửi, giảng viên được nhờ và Admin đều nhận thông báo. Người được nhờ chưa tự ý thay lịch; Admin là người duyệt cuối cùng.</p><div class="tw"><table><thead><tr><th>Mã đơn</th><th>Ca cần thay</th><th>Lý do</th><th>Giảng viên được nhờ</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>${rows||'<tr><td colspan="6" class="empty">Chưa có đơn báo bận. Hãy tạo đơn ở mục “Báo bận / Điều chỉnh”.</td></tr>'}</tbody></table></div></div>`);
+    shell(`<div class="crumb">Trang chủ / Yêu cầu thay ca</div>
+      <header class="ph"><div><h1>Yêu cầu thay ca coi thi</h1><p>Theo dõi đơn, lời mời và kết quả xử lý.</p></div><div class="ph-r"><button class="btn pri" id="refreshCover">${IC.refresh} Làm mới dữ liệu</button></div></header>
+      <div class="stats"><div class="stat ic"><div class="si">${IC.clip}</div><div><b>${list.length}</b><span>Tổng yêu cầu</span></div></div><div class="stat ic hot"><div class="si">${IC.warn}</div><div><b>${pendingCount}</b><span>Đang chờ</span></div></div><div class="stat ic done"><div class="si">${IC.ok}</div><div><b>${approvedCount}</b><span>Đã chấp nhận</span></div></div><div class="stat ic rejected"><div class="si">${IC.bad}</div><div><b>${rejectedCount}</b><span>Đã từ chối</span></div></div><div class="stat ic"><div class="si">${IC.clip}</div><div><b>${withdrawnCount}</b><span>Đã rút</span></div></div></div>
+      <div class="panel"><h2>Danh sách đơn báo bận và yêu cầu thay ca</h2><p class="sub">Đổi người, nhắc sau 24 giờ hoặc rút đơn trước khi Admin duyệt.</p><div class="tw"><table><thead><tr><th>Mã YC</th><th>Ca thi liên quan</th><th>Thời gian bận</th><th>Lý do và Ghi chú</th><th>Trạng thái</th><th>Thời gian gửi</th><th>Người được nhờ / Kết quả</th><th>Thao tác</th></tr></thead><tbody>${rows||'<tr><td colspan="8" class="empty">Chưa có đơn báo bận. Tạo đơn tại mục “Báo bận / Điều chỉnh”.</td></tr>'}</tbody></table></div></div>`);
     $('#refreshCover').onclick=renderPage;
     document.querySelectorAll('[data-cover-request]').forEach(b=>b.onclick=()=>openCoverChooser(b.dataset.coverRequest));
+    document.querySelectorAll('[data-withdraw-busy]').forEach(b=>b.onclick=async()=>{
+      const id=b.dataset.withdrawBusy;
+      if(!confirm(`Rút đơn báo bận #${id}? Lịch coi thi sẽ được giữ nguyên và lời mời coi thay sẽ bị thu hồi.`))return;
+      b.disabled=true;
+      try{const result=await req(`/user/busy-requests/${encodeURIComponent(id)}/withdraw`,{method:'POST'});toast(result.message||'Đã rút đơn báo bận.');await renderPage()}
+      catch(e){toast(e.status===404?'Không tìm thấy API rút đơn. Hãy khởi động lại backend rồi tải lại trang.':e.message);b.disabled=false}
+    });
+    document.querySelectorAll('[data-remind-cover]').forEach(b=>b.onclick=async()=>{
+      const id=b.dataset.remindCover;b.disabled=true;
+      try{const result=await req(`/user/busy-requests/${encodeURIComponent(id)}/remind-cover`,{method:'POST'});toast(result.message||'Đã gửi lời nhắc.');await renderPage()}
+      catch(e){toast(e.message);b.disabled=false}
+    });
+    document.querySelectorAll('[data-view-busy]').forEach(b=>b.onclick=()=>openBusyRequestDetail(b.dataset.viewBusy));
     const autoId=state.pendingCoverId;
     state.pendingCoverId=null;
     if(autoId) openCoverChooser(autoId);
   }
 
   async function openCoverChooser(requestId){
-    openUserModal({title:'Đang kiểm tra giảng viên phù hợp…',body:'<p class="muted">Đang đối chiếu lịch dạy, lịch bận, định mức và các phân công khác.</p>',foot:'<button class="btn" id="cancelCoverLoad">Đóng</button>'});
+    openUserModal({title:'Đang kiểm tra giảng viên phù hợp…',body:'<p class="muted">Đang kiểm tra lịch và định mức.</p>',foot:'<button class="btn" id="cancelCoverLoad">Đóng</button>'});
     $('#cancelCoverLoad').onclick=closeUserModal;
     try{
       const [d,r]=await Promise.all([
@@ -707,14 +755,17 @@
         <div><b>${esc(g.HoTen)} (${esc(g.MaGV)})</b><span>${esc(g.TenBoMon||'')} · ${g.DaCo}/${g.DinhMuc} ca hiện tại</span></div>
       </label>`).join('');
       const date=d.NgayThi?fmt(d.NgayThi):'';
+      const replacingCurrentNominee=!!d.MaGVThayTheDeNghi&&['PENDING','ACCEPTED'].includes(d.TrangThaiXacNhanThayThe);
+      const replacingAccepted=d.TrangThaiXacNhanThayThe==='ACCEPTED';
       openUserModal({
-        title:`Chọn người coi thay cho đơn #${d.MaYeuCau}`,
+        title:`${replacingCurrentNominee?'Đổi người được nhờ':'Chọn người coi thay'} cho đơn #${d.MaYeuCau}`,
         wide:true,
         body:`<div class="panel" style="background:var(--sub);margin-bottom:12px"><b>Ca cần thay:</b><br>${esc(d.MaCa)} · ${date} · tiết ${d.TuTiet}–${d.DenTiet}<br><b>Lý do:</b> ${esc(d.LyDoBaoBan)}</div>
-          <p class="sub">Danh sách dưới đây chỉ gồm giảng viên hiện đủ điều kiện. Admin sẽ kiểm tra lại các ràng buộc khi duyệt.</p>
+          ${replacingCurrentNominee?`<p class="hint">${replacingAccepted?'Người hiện tại đã đồng ý.':'Người hiện tại chưa phản hồi.'} Chọn người khác để thu hồi lời mời cũ; người mới phải đồng ý trước khi đơn tới Admin.</p>`:''}
+          <p class="sub">Chỉ hiện người đủ điều kiện; Admin kiểm tra lại trước khi duyệt.</p>
           ${candidates.length?`<input type="search" id="coverSearch" placeholder="Tìm trong danh sách đủ điều kiện" style="width:100%;margin-bottom:8px"><div id="coverCandidates" style="max-height:300px;overflow:auto">${radios}</div>`:'<div class="panel"><p class="muted">Hiện không có giảng viên nào đủ điều kiện nhận ca này.</p></div>'}
           <div class="err" id="coverErr" role="alert"></div>`,
-        foot:`<button class="btn" id="cancelCover">Hủy</button><button class="btn pri" id="sendCover" ${candidates.length?'':'disabled'}>${IC.send} Gửi yêu cầu nhờ coi thay</button>`
+        foot:`<button class="btn" id="cancelCover">Hủy</button><button class="btn pri" id="sendCover" ${candidates.length?'':'disabled'}>${IC.send} ${replacingCurrentNominee?'Gửi lời mời mới':'Gửi yêu cầu nhờ coi thay'}</button>`
       });
       $('#cancelCover').onclick=closeUserModal;
       const search=$('#coverSearch');
@@ -729,7 +780,7 @@
           closeUserModal();
           toast(sent.message||'Đã gửi yêu cầu coi thay.');
           await renderPage();
-        }catch(e){err.textContent=e.message;btn.disabled=false;btn.innerHTML=IC.send+' Gửi yêu cầu nhờ coi thay'}
+        }catch(e){err.textContent=e.message;btn.disabled=false;btn.innerHTML=IC.send+(replacingCurrentNominee?' Gửi lời mời mới':' Gửi yêu cầu nhờ coi thay')}
       };
     }catch(e){
       openUserModal({title:'Không tải được danh sách giảng viên',body:`<p class="err">${esc(e.message)}</p>`,foot:'<button class="btn" id="closeCoverError">Đóng</button>'});
@@ -742,7 +793,7 @@
     const cover=text.match(/^Giảng viên (.+?) \(([^)]+)\) đã nhờ bạn coi thay ca (.+?) ngày (.+?), tiết (.+?) theo đơn báo bận #(.+?)\.(.*)$/);
     if(cover){
       let tail=cover[7].trim();
-      tail=tail.replace(/\s*Yêu cầu đang chờ Admin duyệt; lịch chưa thay đổi\.?\s*$/,'');
+      tail=tail.replace(/\s*(?:Yêu cầu đang chờ Admin duyệt|Vui lòng chọn đồng ý hoặc từ chối lời mời\. Đơn chỉ được chuyển Admin sau khi bạn đồng ý); lịch chưa thay đổi\.?\s*$/,'');
       let note='';
       const noteMatch=tail.match(/\.?\s*Ghi chú của người gửi:\s*([\s\S]*)$/);
       if(noteMatch){note=noteMatch[1].trim();tail=tail.slice(0,noteMatch.index).trim()}
@@ -753,7 +804,7 @@
         <div class="notice-fact"><span>Ngày thi</span><b>${esc(cover[4])}</b></div>
         <div class="notice-fact"><span>Tiết</span><b>${esc(cover[5])}</b></div>
         <div class="notice-fact"><span>Mã đơn</span><b>#${esc(cover[6])}</b></div>
-        <div class="notice-fact notice-status"><span>Trạng thái</span><b>Chờ Admin duyệt · Lịch chưa thay đổi</b></div>
+        <div class="notice-fact notice-status"><span>Trạng thái</span><b>${x.TrangThaiPhanHoiThayThe==='ACCEPTED'?'Bạn đã đồng ý · Chờ Admin duyệt':x.TrangThaiPhanHoiThayThe==='DECLINED'?'Bạn đã từ chối lời mời':x.TrangThaiPhanHoiThayThe==='WITHDRAWN'?'Người gửi đã rút đơn':x.TrangThaiPhanHoiThayThe==='SUPERSEDED'?'Lời mời đã được chuyển cho giảng viên khác':'Chờ bạn phản hồi · Lịch chưa thay đổi'}</b></div>
       </div>
       <div class="notice-long"><span>Lý do</span><p>${esc(reason||'Không có thông tin')}</p></div>
       ${note?`<div class="notice-long"><span>Ghi chú của người gửi</span><p>${esc(note)}</p></div>`:''}`;
@@ -763,25 +814,52 @@
   }
 
   function noticesPage(){
-    const n=state.notices,unread=n.filter(x=>!x.DaDoc).length;
+    const n=state.notices,unread=n.filter(x=>!isNoticeRead(x)).length;
     const cards=n.map(x=>{
-      const isUnread=!x.DaDoc;
+      const isUnread=!isNoticeRead(x);
       const created=x.TaoLuc?new Date(x.TaoLuc).toLocaleString('vi-VN'):'—';
       const rejected=String(x.Loai||'').toLowerCase().includes('reject');
-      return `<article class="notice-card ${isUnread?'unread':''}">
+      const responseButtons=x.Loai==='BusyCoverRequested'&&x.TrangThaiPhanHoiThayThe==='PENDING'
+        ?`<button class="btn sm danger" data-cover-response="decline" data-notification-id="${esc(x.ID)}">Từ chối lời mời</button><button class="btn sm pri" data-cover-response="accept" data-notification-id="${esc(x.ID)}">✓ Đồng ý coi thay</button>`:'';
+      const markReadButton=isUnread?`<button class="btn sm" data-read="${esc(x.ID)}">Đánh dấu đã đọc</button>`:'';
+      const actions=responseButtons+markReadButton;
+      return `<article class="notice-card ${isUnread?'unread':''}" data-notice-id="${esc(x.ID)}">
         <div class="notice-icon ${rejected?'rejected':''}">${rejected?IC.bad:IC.bell}</div>
         <div class="notice-content">
           <div class="notice-heading"><h3>${esc(x.TieuDe||'Thông báo')}</h3><span class="chip ${isUnread?'warn':'ok'}">${isUnread?'Chưa đọc':'Đã đọc'}</span></div>
           ${notificationDetails(x)}
           <div class="notice-created">${IC.cal}<span>${esc(created)}</span></div>
         </div>
-        ${isUnread?`<button class="btn sm" data-read="${x.ID}">Đánh dấu đã đọc</button>`:''}
+        ${actions?`<div class="notice-actions">${actions}</div>`:''}
       </article>`;
     }).join('');
     shell(`<div class="crumb">Trang chủ / Thông báo</div><header class="ph"><div><h1>Thông báo</h1><p>Yêu cầu báo bận, nhận coi thay và kết quả xử lý.</p></div><div class="ph-r">${unread?'<button class="btn pri" id="readAll">Đánh dấu tất cả đã đọc</button>':''}</div></header><div class="panel notice-panel"><div class="notice-list">${cards||'<p class="muted">Chưa có thông báo.</p>'}</div></div>`);
     const mark=id=>req(`/user/notifications/${encodeURIComponent(state.user.ma_gv)}/${id}/read`,{method:'POST'});
     document.querySelectorAll('[data-read]').forEach(b=>b.onclick=async()=>{try{await mark(b.dataset.read);await renderPage()}catch(e){toast(e.message)}});
-    const all=$('#readAll');if(all)all.onclick=async()=>{try{await Promise.all(n.filter(x=>!x.DaDoc).map(x=>mark(x.ID)));await renderPage()}catch(e){toast(e.message)}};
+    document.querySelectorAll('[data-cover-response]').forEach(b=>b.onclick=()=>{
+      const accept=b.dataset.coverResponse==='accept';
+      const notice=n.find(item=>String(item.ID)===String(b.dataset.notificationId));
+      if(!notice){toast('Không tìm thấy nội dung lời mời. Hãy tải lại trang.');return}
+      const action=accept?'Đồng ý coi thay':'Từ chối lời mời';
+      const note=accept
+        ?'<p class="hint">Bạn xác nhận có thể nhận ca. Lịch chỉ thay đổi sau khi Admin xem nội dung và duyệt.</p>'
+        :'<p class="hint">Người gửi sẽ được báo để chọn giảng viên khác. Lịch hiện tại chưa thay đổi.</p>';
+      openUserModal({
+        title:action,
+        body:`${notificationDetails(notice)}${note}<div class="err" id="coverResponseError" role="alert"></div>`,
+        foot:`<button class="btn" id="cancelCoverResponse">Quay lại</button><button class="btn ${accept?'pri':'danger'}" id="confirmCoverResponse">${accept?'Xác nhận đồng ý':'Xác nhận từ chối'}</button>`
+      });
+      $('#cancelCoverResponse').onclick=closeUserModal;
+      $('#confirmCoverResponse').onclick=async()=>{
+        const confirmButton=$('#confirmCoverResponse'),error=$('#coverResponseError');
+        confirmButton.disabled=true;confirmButton.textContent='Đang gửi phản hồi…';
+        try{
+          const result=await req(`/user/busy-requests/${encodeURIComponent(notice.YeuCauBaoBanID)}/respond-cover`,{method:'POST',body:JSON.stringify({chap_nhan:accept})});
+          closeUserModal();toast(result.message||'Đã ghi nhận phản hồi.');await renderPage();
+        }catch(e){error.textContent=e.message;confirmButton.disabled=false;confirmButton.textContent=accept?'Xác nhận đồng ý':'Xác nhận từ chối'}
+      };
+    });
+    const all=$('#readAll');if(all)all.onclick=async()=>{try{await Promise.all(n.filter(x=>!isNoticeRead(x)).map(x=>mark(x.ID)));await renderPage()}catch(e){toast(e.message)}};
   }
 
   function initializeLecturerApp(){
@@ -794,6 +872,20 @@
       else renderPage();
     } catch(e) { location.replace('login.html'); }
   }
+  let scheduleRefreshTimer=null;
+  function refreshScheduleWhenVisible(){
+    if(!state.user||state.page!=='schedule'||document.visibilityState!=='visible')return;
+    clearTimeout(scheduleRefreshTimer);
+    scheduleRefreshTimer=setTimeout(()=>{if(state.user&&state.page==='schedule')renderPage()},120);
+  }
+  // Admin and lecturer pages are often open in separate tabs. Re-read SQL when
+  // assignments change in another tab, or when the lecturer returns to this tab.
+  window.addEventListener('storage',event=>{
+    if(event.key==='huit-schedule-data-change'&&event.newValue)refreshScheduleWhenVisible();
+  });
+  document.addEventListener('visibilitychange',()=>{
+    if(document.visibilityState==='visible')refreshScheduleWhenVisible();
+  });
   if(document.readyState==='loading') window.addEventListener('DOMContentLoaded',initializeLecturerApp,{once:true});
   else initializeLecturerApp();
 })();

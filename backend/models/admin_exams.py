@@ -124,6 +124,30 @@ def save_exam_assignments(ma_dot: str, x: LuuPhanCongIn):
     except Exception as e:
         raise HTTPException(400, f'Không lưu được phân công vào SQL Server: {e}')
 
+def remove_saved_assignments(ma_dot: str):
+    """Gỡ lịch đã công bố khỏi bảng phân công, giữ nguyên các ca thi và lịch sử."""
+    try:
+        with get_connection() as cn:
+            cur = cn.cursor()
+            cur.execute('SELECT 1 FROM dbo.DotThi WHERE MaDot=?', ma_dot)
+            if not cur.fetchone():
+                raise HTTPException(404, 'Không tìm thấy đợt thi.')
+            cur.execute("""SELECT TOP 1 y.ID
+                           FROM dbo.YeuCauDoiCa y
+                           JOIN dbo.CaThi c ON c.MaCa=y.MaCaGui
+                           WHERE c.MaDot=? AND y.TrangThai='Pending'""", ma_dot)
+            if cur.fetchone():
+                raise HTTPException(409, 'Đợt thi còn yêu cầu đổi ca đang chờ xử lý. Hãy xử lý các yêu cầu trước khi gỡ lịch.')
+            cur.execute('SELECT COUNT(*) FROM dbo.PhanCongCoiThi p JOIN dbo.CaThi c ON c.MaCa=p.MaCa WHERE c.MaDot=?', ma_dot)
+            count = int(cur.fetchone()[0] or 0)
+            cur.execute('DELETE p FROM dbo.PhanCongCoiThi p JOIN dbo.CaThi c ON c.MaCa=p.MaCa WHERE c.MaDot=?', ma_dot)
+            cn.commit()
+            return {'ok': True, 'ma_dot': ma_dot, 'assignments_deleted': count}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f'Không gỡ được phân công đã lưu: {e}')
+
 def create_exam_shift(x: CaThiIn):
     import datetime
     try:
@@ -201,17 +225,48 @@ def set_common_quota(x: DinhMucChungIn):
     try:
         with get_connection() as cn:
             cur = cn.cursor()
-            cur.execute('EXEC dbo.sp_DatDinhMucChung ?,?,?', x.ma_dot, x.ty_le, x.ma_khoa)
-            result = {}
-            while True:
-                if cur.description:
-                    cols = [c[0] for c in cur.description]
-                    rows = cur.fetchall()
-                    if rows and 'TongNhuCau' in cols:
-                        result = dict(zip(cols, rows[-1]))
-                if not cur.nextset():
-                    break
+            cur.execute('SELECT 1 FROM dbo.DotThi WHERE MaDot=?', x.ma_dot)
+            if not cur.fetchone():
+                raise HTTPException(404, 'Đợt thi không tồn tại.')
+            if x.ma_khoa:
+                cur.execute('SELECT 1 FROM dbo.Khoa WHERE MaKhoa=?', x.ma_khoa)
+                if not cur.fetchone():
+                    raise HTTPException(404, 'Khoa không tồn tại.')
+            khoa_filter = ' AND bm.MaKhoa=?' if x.ma_khoa else ''
+            scope_params = (x.ma_dot, x.ma_khoa) if x.ma_khoa else (x.ma_dot,)
+            # DinhMucPhanCong is the membership list for a lecturer in an exam
+            # period. Updating a common quota must never create membership rows
+            # for every active lecturer; only update the already selected set.
+            cur.execute('''SELECT COUNT(*)
+                           FROM dbo.DinhMucPhanCong d
+                           JOIN dbo.GiangVien g ON g.MaGV=d.MaGV
+                           JOIN dbo.BoMon bm ON bm.MaBoMon=g.MaBoMon
+                           WHERE d.MaDot=? AND g.TrangThai=N'Đang công tác' ''' + khoa_filter,
+                        *scope_params)
+            lecturer_count = int(cur.fetchone()[0] or 0)
+            if not lecturer_count:
+                raise HTTPException(400, 'Đợt thi chưa có giảng viên tham gia trong phạm vi đã chọn.')
+
+            cur.execute('''UPDATE d SET TyLeDinhMuc=?,GhiChu=N'Đặt định mức chung'
+                           FROM dbo.DinhMucPhanCong d
+                           JOIN dbo.GiangVien g ON g.MaGV=d.MaGV
+                           JOIN dbo.BoMon bm ON bm.MaBoMon=g.MaBoMon
+                           WHERE d.MaDot=? AND g.TrangThai=N'Đang công tác' ''' + khoa_filter,
+                        x.ty_le, *scope_params)
+            cur.execute('EXEC dbo.sp_TinhDinhMucTheoTyLe ?', x.ma_dot)
+            while cur.nextset():
+                pass
+            cur.execute('''SELECT ? AS MaDot,
+                                  ISNULL((SELECT SUM(SoGVCanCap) FROM dbo.CaThi WHERE MaDot=?),0) AS TongNhuCau,
+                                  ISNULL((SELECT SUM(SoCaQuyDinh) FROM dbo.DinhMucPhanCong WHERE MaDot=?),0) AS TongDinhMuc''',
+                        x.ma_dot, x.ma_dot, x.ma_dot)
+            row = cur.fetchone()
+            result = dict(zip([c[0] for c in cur.description], row)) if row else {}
+            result['GiangVienCapNhat'] = lecturer_count
+            result['ChenhLech'] = result.get('TongNhuCau', 0) - result.get('TongDinhMuc', 0)
             cn.commit()
-            return result or {'MaDot': x.ma_dot}
+            return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(400, str(e))

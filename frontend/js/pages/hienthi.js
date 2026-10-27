@@ -6,7 +6,37 @@ function render(){
   if(!canSee(view))view='home';
   const pages={home:homeView,sys:sysView,lec:lecView,exam:examView,cons:consView,sched:schedView,rep:repView,accounts:accountsView,busy_reqs:busyReqsView};
   app.innerHTML=topbar()+'<div class="shell">'+sidebar()+'<main class="main">'+pages[view]()+'</main></div>';
-  const lc=$('#lcount');if(lc)lc.textContent=S.lecs.length+' giảng viên';refreshAdminBell();
+  const lc=$('#lcount');if(lc)lc.textContent=S.lecs.length+' giảng viên';refreshAdminBell();refreshAdminBusyCount();ensureAdminRequestPolling();
+  if(view==='sched')loadScheduleSharingStatus();
+}
+function updateScheduleSharingControls(){
+  const status=$('#scheduleSharingStatus'),toggle=document.querySelector('[data-act="toggle-schedule-sharing"]'),reload=document.querySelector('[data-act="refresh-schedule-sharing"]');
+  if(!status||!toggle)return;
+  if(scheduleSharingLoading){status.textContent='Đang tải trạng thái chia sẻ…';toggle.textContent='Đang đọc…';toggle.disabled=true;if(reload)reload.disabled=true;return}
+  if(scheduleSharingError){status.textContent='Không tải được: '+scheduleSharingError;toggle.textContent='Chưa sẵn sàng';toggle.disabled=true;if(reload)reload.disabled=false;return}
+  const enabled=!!scheduleSharingEnabled;
+  status.textContent=enabled?'Đang bật — giảng viên có thể chọn xem lịch của nhau.':'Đang tắt — giảng viên chỉ xem lịch cá nhân.';
+  toggle.textContent=enabled?'Tắt chia sẻ lịch':'Cho phép giảng viên xem lịch của nhau';
+  toggle.className='btn sm '+(enabled?'danger':'pri');
+  toggle.setAttribute('aria-pressed',String(enabled));
+  toggle.disabled=false;
+  if(reload)reload.disabled=false;
+}
+function loadScheduleSharingStatus(force=false){
+  if(view!=='sched'||!cur)return;
+  if(force){scheduleSharingEnabled=null;scheduleSharingError=''}
+  if(scheduleSharingLoading){updateScheduleSharingControls();return}
+  if(scheduleSharingEnabled!==null&&!scheduleSharingError){updateScheduleSharingControls();return}
+  if(scheduleSharingError&&!force){updateScheduleSharingControls();return}
+  scheduleSharingLoading=true;updateScheduleSharingControls();
+  API.scheduleSharing().then(result=>{
+    scheduleSharingEnabled=!!result.enabled;scheduleSharingError=result.migration_required?'Cần chạy database/migrations/20261027_schedule_sharing.sql trước khi bật.':'';
+  }).catch(error=>{
+    scheduleSharingEnabled=null;scheduleSharingError=error.message||'Hãy áp dụng migration SQL chia sẻ lịch.';
+  }).finally(()=>{
+    scheduleSharingLoading=false;
+    if(view==='sched')updateScheduleSharingControls();
+  });
 }
 function snapshot(mode){
   const a=analyze();
@@ -15,7 +45,7 @@ function snapshot(mode){
 }
 function lecForm(l){
   const bms=window.__BOMON||[],bm=l&&l.ma_bo_mon||((bms[0]||{}).MaBoMon||'');
-  openModal({title:l?'Sửa giảng viên':'Thêm giảng viên',body:'<label class="f"><span>Họ tên</span><input type="text" id="fn" value="'+esc(l?l.name:'')+'"></label><label class="f"><span>Khoa</span><input type="text" id="fd" value="Khoa Công nghệ Thông tin" readonly></label><label class="f"><span>Bộ môn</span><select id="fbm">'+bms.map(x=>'<option value="'+esc(x.MaBoMon)+'"'+(bm===x.MaBoMon?' selected':'')+'>'+esc(x.TenBoMon)+'</option>').join('')+'</select></label><label class="f"><span>Định mức (%)</span><input type="number" id="fq" min="0" max="100" value="'+(l?l.pct:100)+'"></label><div class="err" id="ferr"></div>',foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="save-lec" data-id="'+(l?l.id:'')+'">Lưu</button>'});
+  openModal({title:l?'Sửa giảng viên':'Thêm giảng viên',body:'<label class="f"><span>Họ tên</span><input type="text" id="fn" maxlength="120" value="'+esc(l?l.name:'')+'" required></label><label class="f"><span>Khoa</span><input type="text" id="fd" value="Khoa Công nghệ Thông tin" readonly></label><label class="f"><span>Bộ môn</span><select id="fbm">'+bms.map(x=>'<option value="'+esc(x.MaBoMon)+'"'+(bm===x.MaBoMon?' selected':'')+'>'+esc(x.TenBoMon)+'</option>').join('')+'</select></label><label class="f"><span>Email <small class="muted">(không bắt buộc)</small></span><input type="email" id="femail" maxlength="150" value="'+esc(l?l.email||'':'')+'" placeholder="name@huit.edu.vn"></label><label class="f"><span>Định mức (%)</span><input type="number" id="fq" min="0" max="100" value="'+(l?l.pct:100)+'"></label><div class="err" id="ferr"></div>',foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="save-lec" data-id="'+(l?l.id:'')+'">Lưu</button>'});
 }
 function pickList(){
   const ex=exm(pick.ex),q=(pick.q||'').trim().toLowerCase();

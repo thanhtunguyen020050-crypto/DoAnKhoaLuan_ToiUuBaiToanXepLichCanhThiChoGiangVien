@@ -10,16 +10,44 @@ const NAV_IC={home:'home',sys:'gear',lec:'users',exam:'inbox',cons:'sliders',sch
 function sidebar(){
   const items=[['home','Tổng quan']].concat(VIEWS.map((v,i)=>[v,MODS[i]]));
   return '<aside class="side"><div class="sec">Menu chính</div><nav class="nav" aria-label="Chức năng">'+
-    items.filter(x=>canSee(x[0])).map(x=>'<button class="'+(view===x[0]?'on':'')+'" data-act="go" data-v="'+x[0]+'"'+(view===x[0]?' aria-current="page"':'')+'><span class="n">'+IC[NAV_IC[x[0]]]+'</span>'+esc(x[1])+'</button>').join('')+
+    items.filter(x=>canSee(x[0])).map(x=>'<button class="'+(view===x[0]?'on':'')+'" data-act="go" data-v="'+x[0]+'"'+(view===x[0]?' aria-current="page"':'')+'><span class="n">'+IC[NAV_IC[x[0]]]+'</span>'+esc(x[1])+(x[0]==='busy_reqs'?'<span class="nb" id="busyReqNavCount" aria-label="'+(adminBusyCount||0)+' yêu cầu chờ Admin xử lý"'+(adminBusyCount?'':' hidden')+'>'+(adminBusyCount>99?'99+':adminBusyCount||0)+'</span>':'')+'</button>').join('')+
     '</nav><div class="side-foot"><b>HUIT &middot; Khoa CNTT</b><span>Hệ thống nội bộ, chỉ dành cho quản trị viên</span><span>Phiên bản 1.0.0</span></div></aside>';
 }
 // Huy hiệu thông báo: so sánh với ID thông báo Admin đã xem lần cuối (lưu ở trình duyệt).
+let adminBellRequestSeq=0;
 function refreshAdminBell(force){
   if(!force&&Date.now()-(refreshAdminBell.t||0)<30000)return;refreshAdminBell.t=Date.now();
+  const requestSeq=++adminBellRequestSeq;
   API.adminNotifications().then(r=>{
-    const seen=+localStorage.getItem('huit-admin-seen')||0,n=(r.items||[]).filter(x=>x.ID>seen).length,d=$('#bellDot');
+    // Ignore stale responses so an older in-flight refresh cannot clear a newer badge.
+    if(requestSeq!==adminBellRequestSeq)return;
+    const seen=+localStorage.getItem('huit-admin-seen')||0,n=(r.items||[]).filter(x=>Number(x.ID)>seen).length,d=$('#bellDot');
     if(d){d.textContent=n>9?'9+':n;d.hidden=!n}
   }).catch(()=>{});
+}
+function updateAdminBusyCountBadge(){
+  const badge=$('#busyReqNavCount');
+  if(!badge)return;
+  const count=Number(adminBusyCount)||0;
+  badge.textContent=count>99?'99+':String(count);
+  badge.hidden=!count;
+  badge.setAttribute('aria-label',count+' yêu cầu chờ Admin xử lý');
+}
+function refreshAdminBusyCount(force){
+  if(!force&&Date.now()-(refreshAdminBusyCount.t||0)<30000)return;
+  refreshAdminBusyCount.t=Date.now();
+  const requestSeq=refreshAdminBusyCount.seq=(refreshAdminBusyCount.seq||0)+1;
+  API.adminBusyRequests('PENDING').then(r=>{
+    if(requestSeq!==refreshAdminBusyCount.seq)return;
+    adminBusyCount=(r.items||[]).filter(x=>x.TrangThai==='PENDING').length;
+    updateAdminBusyCountBadge();
+  }).catch(()=>{});
+}
+function ensureAdminRequestPolling(){
+  if(window.__adminRequestPolling)return;
+  window.__adminRequestPolling=setInterval(()=>{
+    if(cur){refreshAdminBell(true);refreshAdminBusyCount(true)}
+  },30000);
 }
 function initials(n){return String(n||'').trim().split(/\s+/).slice(-2).map(w=>w[0]).join('').toUpperCase()}
 function head(t,sub,right){
@@ -30,7 +58,7 @@ function loginView(){
   let cells='';const lv=['','a','b','','a','','c','b','a','','','b','a','','c','a','b','','a','a','','c','','b','','a','b','','a','','c','a','','b','','a','a','b','','c'];
   for(let i=0;i<40;i++)cells+='<i class="'+lv[i]+'"></i>';
   return '<div class="login"><section class="login-art"><div class="lb">'+logoHTML(72)+'<div class="uni">Trường Đại học Công Thương<br>Thành phố Hồ Chí Minh</div></div><div><h2>Hệ thống xếp lịch gác thi</h2><p>Phân công giám thị đúng định mức, không trùng ca, và kiểm chứng được mức độ thỏa ràng buộc của từng lịch.</p></div><div class="mini" aria-hidden="true">'+cells+'</div></section>'+
-    '<section class="login-form"><div><h1>Đăng nhập</h1><p class="muted" style="margin-bottom:18px">Hệ thống nội bộ Khoa Công nghệ Thông tin, chỉ dành cho quản trị viên.</p><label class="f"><span>Tên đăng nhập</span><input type="text" id="lu" value="admin" autocomplete="username"></label><label class="f"><span>Mật khẩu</span><input type="password" id="lp" value="demo" autocomplete="current-password"></label><div class="err" id="lerr"></div><button class="btn pri" data-act="login">Đăng nhập</button><p class="hint">Bản mẫu: nhập bất kỳ mật khẩu nào. Chỉ tài khoản quản trị viên mới đăng nhập được hệ thống này. Bấm vào logo để đổi ảnh khác nếu cần.</p></div></section></div>';
+    '<section class="login-form"><div><h1>Đăng nhập</h1><p class="muted" style="margin-bottom:18px">Hệ thống nội bộ Khoa Công nghệ Thông tin, chỉ dành cho quản trị viên.</p><label class="f"><span>Tên đăng nhập</span><input type="text" id="lu" value="admin" autocomplete="username"></label><label class="f"><span>Mật khẩu</span><input type="password" id="lp" value="demo" autocomplete="current-password"></label><div class="err" id="lerr"></div><button class="btn pri" data-act="login">Đăng nhập</button><p class="hint">Bản mẫu: mật khẩu bất kỳ. Chỉ Admin đăng nhập được.</p></div></section></div>';
 }
 function homeView(){
   const a=analyze(),need=S.exams.reduce((n,e)=>n+e.need,0);
@@ -61,15 +89,28 @@ function homeView(){
 function sysView(){
   const rows=S.users.map(u=>'<tr><td><b>'+esc(u.name)+'</b></td><td>'+esc(u.user)+'</td><td><select data-chg="role" data-id="'+u.id+'" aria-label="Vai trò">'+ROLES.map(r=>'<option'+(r===u.role?' selected':'')+'>'+r+'</option>').join('')+'</select></td><td><label class="sw"><input type="checkbox" data-chg="active" data-id="'+u.id+'"'+(u.on?' checked':'')+(u.id===1?' disabled':'')+' aria-label="Kích hoạt"><span></span></label></td><td class="r"><button class="btn sm ghost danger" data-act="del-user" data-id="'+u.id+'"'+(u.id===1?' disabled':'')+'>Xóa</button></td></tr>').join('');
   const pm=MODS.map((m,i)=>'<tr><td>'+(i+1)+'. '+m+'</td>'+ROLES.map((r,ri)=>'<td class="c"><input type="checkbox" data-chg="perm" data-r="'+ri+'" data-i="'+i+'"'+(S.perms[r][i]?' checked':'')+(ri===0&&i===0?' disabled':'')+' aria-label="'+esc(r+' - '+m)+'"></td>').join('')+'</tr>').join('');
-  return head('Quản lý hệ thống','Tài khoản đăng nhập và quyền truy cập từng chức năng.','<button class="btn pri" data-act="add-user">'+IC.plus+'Thêm tài khoản</button>')+
-    '<div class="panel"><h2>Tài khoản</h2><p class="sub">Tài khoản đầu tiên luôn được bật để tránh bị khóa khỏi hệ thống.</p><div class="tw"><table><thead><tr><th>Họ tên</th><th>Tên đăng nhập</th><th>Vai trò</th><th>Hoạt động</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>'+
-    '<div class="panel"><h2>Phân quyền theo vai trò</h2><p class="sub">Chức năng không được tích sẽ bị ẩn khỏi menu của vai trò đó.</p><div class="tw"><table><thead><tr><th>Chức năng</th>'+ROLES.map(r=>'<th class="c">'+r+'</th>').join('')+'</tr></thead><tbody>'+pm+'</tbody></table></div></div>';
+  return head('Quản lý hệ thống','Quản lý tài khoản, vai trò và quyền truy cập.','<button class="btn pri" data-act="add-user">'+IC.plus+'Thêm tài khoản</button>')+
+    '<div class="panel"><h2>Tài khoản</h2><p class="sub">Tài khoản đầu tiên luôn được bật.</p><div class="tw"><table><thead><tr><th>Họ tên</th><th>Tên đăng nhập</th><th>Vai trò</th><th>Hoạt động</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div></div>'+
+    '<div class="panel"><h2>Phân quyền theo vai trò</h2><p class="sub">Bỏ chọn để ẩn chức năng khỏi menu vai trò.</p><div class="tw"><table><thead><tr><th>Chức năng</th>'+ROLES.map(r=>'<th class="c">'+r+'</th>').join('')+'</tr></thead><tbody>'+pm+'</tbody></table></div></div>';
+}
+function accountSearchKey(value){return String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[đĐ]/g,'d').toLowerCase()}
+function accountRows(){
+  const q=accountSearchKey(accountsSearch.trim());
+  const matches=adminAccounts.filter(a=>!q||[a.HoTen,a.MaGV,a.Email].some(v=>accountSearchKey(v).includes(q)));
+  const rows=matches.map(a=>{
+    const maGV=esc(a.MaGV||''), stopped=a.TrangThaiGiangVien!=='Đang công tác';
+    const action=stopped
+      ? '<button class="btn sm pri" data-act="reactivate-lecturer" data-id="'+maGV+'">Cho công tác lại</button>'
+      : '<button class="btn sm" data-act="reset-user-password" data-id="'+maGV+'">Cấp mật khẩu tạm</button>';
+    return '<tr><td><b>'+esc(a.HoTen||'')+'</b></td><td>'+maGV+'</td><td>'+esc(a.Email||'—')+'</td><td>'+(a.IsActive?'<span class="chip ok">Đang hoạt động</span>':'<span class="chip bad">Đã khóa</span>')+'</td><td>'+(a.AccountStatusKnown===false?'<span class="chip">Chưa có trạng thái</span>':a.MustChangePassword?'<span class="chip warn">Cần đổi mật khẩu</span>':'<span class="chip ok">Đã thiết lập</span>')+'</td><td>'+esc(a.TrangThaiGiangVien||'')+'</td><td>'+esc(a.LastLoginAt?new Date(a.LastLoginAt).toLocaleString('vi-VN'):'Chưa đăng nhập')+'</td><td>'+action+'</td></tr>'
+  }).join('');
+  return {rows:rows||'<tr><td colspan="8" class="empty">'+(adminAccounts.length?'Không tìm thấy tài khoản phù hợp.':'Chưa có tài khoản nào.')+'</td></tr>',count:matches.length};
 }
 function accountsView(){
-  const rows=adminAccounts.map(a=>'<tr><td><b>'+esc(a.HoTen||'')+'</b></td><td>'+esc(a.MaGV||'')+'</td><td>'+esc(a.Email||'—')+'</td><td>'+(a.IsActive?'<span class="chip ok">Đang hoạt động</span>':'<span class="chip bad">Đã khóa</span>')+'</td><td>'+(a.AccountStatusKnown===false?'<span class="chip">Chưa có trạng thái</span>':a.MustChangePassword?'<span class="chip warn">Cần đổi mật khẩu</span>':'<span class="chip ok">Đã thiết lập</span>')+'</td><td>'+esc(a.TrangThaiGiangVien||'')+'</td><td>'+esc(a.LastLoginAt?new Date(a.LastLoginAt).toLocaleString('vi-VN'):'Chưa đăng nhập')+'</td><td><button class="btn sm" data-act="reset-user-password" data-id="'+esc(a.MaGV||'')+'">Cấp mật khẩu tạm</button></td></tr>').join('');
-  const body=accountsLoading?'<tr><td colspan="8" class="empty">Đang tải tài khoản từ SQL Server…</td></tr>':accountsError?'<tr><td colspan="8" class="empty">'+esc(accountsError)+'</td></tr>':rows||'<tr><td colspan="8" class="empty">Chưa có tài khoản user trong SQL Server.</td></tr>';
-  return head('Quản lý account','','<button class="btn pri" data-act="load-user-accounts">'+IC.refresh+'Làm mới dữ liệu</button>')+
-    '<div class="panel"><h2>Tài khoản user</h2><p class="sub">Danh sách bao gồm cả tài khoản đang hoạt động và đã khóa. Admin có thể cấp mật khẩu tạm nếu user quên mật khẩu.</p><div class="tw"><table><thead><tr><th>Họ tên</th><th>Mã giảng viên</th><th>Email</th><th>Hoạt động</th><th>Mật khẩu</th><th>Trạng thái giảng viên</th><th>Đăng nhập lần cuối</th><th>Thao tác</th></tr></thead><tbody>'+body+'</tbody></table></div></div>';
+  const result=accountRows();
+  const body=accountsLoading?'<tr><td colspan="8" class="empty">Đang tải danh sách tài khoản…</td></tr>':accountsError?'<tr><td colspan="8" class="empty">'+esc(accountsError)+'</td></tr>':result.rows;
+  return head('Quản lý tài khoản','','<button class="btn pri" data-act="load-user-accounts">'+IC.refresh+'Làm mới dữ liệu</button>')+
+    '<div class="panel"><h2>Danh sách tài khoản giảng viên</h2><p class="sub">Giảng viên ngừng công tác sẽ không đăng nhập được; có thể khôi phục trạng thái khi quay lại trường.</p><div class="tools"><div class="grow"><input type="text" data-inp="accounts-search" placeholder="Tìm theo họ tên, mã giảng viên hoặc email..." value="'+esc(accountsSearch)+'" aria-label="Tìm tài khoản giảng viên"></div><span class="muted" id="accountSearchCount">'+(accountsLoading?'Đang tải…':accountsError?'':result.count+' / '+adminAccounts.length+' tài khoản')+'</span></div><div class="tw"><table><thead><tr><th>Họ tên</th><th>Mã giảng viên</th><th>Email</th><th>Hoạt động</th><th>Mật khẩu</th><th>Trạng thái giảng viên</th><th>Đăng nhập lần cuối</th><th>Thao tác</th></tr></thead><tbody id="userAccountRows">'+body+'</tbody></table></div></div>';
 }
 function busyReqsView(){
   const list = adminBusyRequests;
@@ -80,51 +121,46 @@ function busyReqsView(){
   const reqStatusMap = {
     'PENDING': ['Chờ Admin xử lý', 'warn'],
     'APPROVED': ['Đã chấp nhận', 'ok'],
-    'REJECTED': ['Đã từ chối', 'bad']
+    'REJECTED': ['Đã từ chối', 'bad'],
+    'WITHDRAWN': ['Người gửi đã rút đơn', '']
+  };
+  const nomineeResponseMap = {
+    'PENDING': ['Chờ phản hồi', 'warn'],
+    'ACCEPTED': ['Đã đồng ý', 'ok'],
+    'DECLINED': ['Đã từ chối', 'bad'],
+    'WITHDRAWN': ['Lời mời đã bị rút', '']
   };
 
   const rows = list.map(a => {
     const st = reqStatusMap[a.TrangThai] || [a.TrangThai, ''];
-    const caInfo = a.MaCa ? '<b>'+esc(a.MaCa)+'</b><br><span class="hint" style="margin:0">'+fmtD(a.NgayThi)+' · Tiết '+(a.TuTiet||'')+'–'+(a.DenTiet||'')+' (P.'+esc(a.PhongThi||'—')+')</span>' : '<span class="muted">Không gắn ca cụ thể</span>';
-    const timeRange = esc(a.ThoiGianBatDauBan ? a.ThoiGianBatDauBan.replace('T',' ') : '')+'<br>→ '+esc(a.ThoiGianKetThucBan ? a.ThoiGianKetThucBan.replace('T',' ') : '');
-    
-    let resInfo = '<span class="muted">—</span>';
-    if (a.TrangThai === 'APPROVED') {
-      resInfo = '<span style="color:var(--ok);font-weight:600">Đã đổi GV</span><br><span class="hint" style="margin:0">Thay bởi: '+esc(a.TenGVThayThe || a.MaGVThayThe || 'Đã phân công lại')+'</span>';
-    } else if (a.TrangThai === 'REJECTED') {
-      resInfo = '<span style="color:var(--bad);font-weight:500">Giữ nguyên lịch</span><br><span class="hint" style="margin:0">Lý do: '+esc(a.LyDoTuChoi || 'Không nêu')+'</span>';
-    }
+    const nomineeResponse=nomineeResponseMap[a.TrangThaiXacNhanThayThe]||['Chưa gửi lời mời',''];
 
     const actionBtn = a.TrangThai === 'PENDING'
-      ? '<button class="btn sm pri" data-act="process-busy-request" data-id="'+a.MaYeuCau+'">Xem & Xử lý</button>'
+      ? '<button class="btn sm pri" data-act="process-busy-request" data-id="'+a.MaYeuCau+'">Xem và xử lý</button>'
       : '<button class="btn sm" data-act="view-busy-detail" data-id="'+a.MaYeuCau+'">Chi tiết</button>';
 
     return '<tr>'+
       '<td><b>#'+a.MaYeuCau+'</b></td>'+
       '<td><b>'+esc(a.HoTen)+'</b><br><span class="hint" style="margin:0">'+esc(a.MaGV)+'</span></td>'+
-      '<td>'+caInfo+'</td>'+
-      '<td>'+(a.TenGVThayTheDeNghi||a.MaGVThayTheDeNghi?'<b>'+esc(a.TenGVThayTheDeNghi||a.MaGVThayTheDeNghi)+'</b><br><span class="hint" style="margin:0">'+esc(a.MaGVThayTheDeNghi||'')+'</span>':'<span class="muted">—</span>')+'</td>'+
-      '<td><small>'+timeRange+'</small></td>'+
-      '<td><b>'+esc(a.LyDoBaoBan)+'</b>'+(a.GhiChuGV ? '<br><span class="hint" style="margin:0">'+esc(a.GhiChuGV)+'</span>' : '')+'</td>'+
+      '<td>'+(a.TenGVThayTheDeNghi||a.MaGVThayTheDeNghi?'<b>'+esc(a.TenGVThayTheDeNghi||a.MaGVThayTheDeNghi)+'</b><br><span class="hint" style="margin:0">'+esc(a.MaGVThayTheDeNghi||'')+'</span><br><span class="chip '+nomineeResponse[1]+'">'+esc(nomineeResponse[0])+'</span>':'<span class="muted">Chưa chọn người được nhờ</span>')+'</td>'+
+      '<td><div class="busy-request-reason" title="'+esc([a.LyDoBaoBan,a.GhiChuGV].filter(Boolean).join(' — '))+'"><b>'+esc(a.LyDoBaoBan||'Chưa nêu lý do')+'</b></div></td>'+
       '<td><span class="chip '+st[1]+'">'+esc(st[0])+'</span></td>'+
-      '<td><small>'+esc(a.ThoiGianGui ? a.ThoiGianGui.replace('T',' ') : '')+'</small></td>'+
-      '<td>'+resInfo+'</td>'+
       '<td>'+actionBtn+'</td>'+
     '</tr>';
   }).join('');
 
   const body = busyReqsLoading
-    ? '<tr><td colspan="10" class="empty">Đang tải danh sách yêu cầu báo bận từ SQL Server…</td></tr>'
+    ? '<tr><td colspan="6" class="empty">Đang tải danh sách yêu cầu báo bận…</td></tr>'
     : busyReqsError
-    ? '<tr><td colspan="10" class="empty" style="color:var(--bad)">'+esc(busyReqsError)+'</td></tr>'
-    : rows || '<tr><td colspan="10" class="empty">Không có yêu cầu báo bận nào.</td></tr>';
+    ? '<tr><td colspan="6" class="empty" style="color:var(--bad)">'+esc(busyReqsError)+'</td></tr>'
+    : rows || '<tr><td colspan="6" class="empty">Không có yêu cầu báo bận nào.</td></tr>';
 
   const bulkApproveBtn = pendingCount && !busyReqsLoading && !busyReqsError
-    ? '<button class="btn pri" data-act="accept-all-busy-requests" title="Chấp nhận các đơn đang chờ trong danh sách hiện tại; từng đơn vẫn được kiểm tra ràng buộc">'+IC.ok+'Chấp nhận tất cả ('+pendingCount+')</button>'
+    ? '<button class="btn pri" data-act="accept-all-busy-requests" title="Duyệt các đơn đang chờ; từng đơn vẫn được kiểm tra ràng buộc">'+IC.ok+'Chấp nhận tất cả ('+pendingCount+')</button>'
     : '';
 
   return head('Quản lý yêu cầu báo bận',
-    'Xem đơn báo bận cùng giảng viên được nhờ coi thay, kiểm tra ràng buộc rồi quyết định cập nhật lịch.',
+    'Chỉ đơn đã được người nhận đồng ý mới chuyển đến đây.',
     '<button class="btn" data-act="load-busy-requests">'+IC.refresh+'Làm mới dữ liệu</button>'+bulkApproveBtn) +
     '<div class="stats">'+
       '<div class="stat ic"><div class="si">'+IC.clip+'</div><div><b>'+list.length+'</b><span>Tổng số yêu cầu</span></div></div>'+
@@ -143,44 +179,45 @@ function busyReqsView(){
           '<option value="PENDING" '+(busyReqFilter==='PENDING'?'selected':'')+'>Chờ xử lý (PENDING)</option>'+
           '<option value="APPROVED" '+(busyReqFilter==='APPROVED'?'selected':'')+'>Đã chấp nhận (APPROVED)</option>'+
           '<option value="REJECTED" '+(busyReqFilter==='REJECTED'?'selected':'')+'>Đã từ chối (REJECTED)</option>'+
+          '<option value="WITHDRAWN" '+(busyReqFilter==='WITHDRAWN'?'selected':'')+'>Người gửi đã rút đơn</option>'+
         '</select>'+
       '</div>'+
       '<div class="tw">'+
-        '<table>'+
+        '<table class="busy-requests-table">'+
           '<thead>'+
             '<tr>'+
               '<th>Mã YC</th>'+
               '<th>Giảng viên</th>'+
-              '<th>Ca thi liên quan</th>'+
-              '<th>Giảng viên được nhờ</th>'+
-              '<th>Thời gian bận</th>'+
+              '<th>Người được nhờ &amp; xác nhận</th>'+
               '<th>Lý do</th>'+
               '<th>Trạng thái</th>'+
-              '<th>Thời gian gửi</th>'+
-              '<th>Kết quả xử lý</th>'+
               '<th>Thao tác</th>'+
             '</tr>'+
           '</thead>'+
           '<tbody>'+body+'</tbody>'+
         '</table>'+
       '</div>'+
-      '<p class="hint">Đơn chỉ xuất hiện tại đây sau khi giảng viên đã chọn người được nhờ. Yêu cầu chờ xử lý được ưu tiên; khi chấp nhận, hệ thống kiểm tra lại RB1–RB6 trước khi cập nhật lịch chính thức.</p>'+
+      '<p class="hint">Ca thi, thời gian, ghi chú và kết quả xử lý được xem trong “Chi tiết”. Khi duyệt, hệ thống kiểm tra lại các ràng buộc RB1–RB6.</p>'+
     '</div>';
 }
 function lecRows(){
   const q=F.lq.trim().toLowerCase();
   const L=S.lecs.filter(l=>(!F.ld||l.dept===F.ld)&&(!q||l.name.toLowerCase().indexOf(q)>=0));
-  if(!L.length)return '<tr><td colspan="5" class="empty">Không có giảng viên phù hợp trong SQL Server.</td></tr>';
+  if(!L.length)return '<tr><td colspan="5" class="empty">Không tìm thấy giảng viên phù hợp.</td></tr>';
   return L.map(l=>'<tr><td><b>'+esc(l.name)+'</b>'+(inDot(l)?'':' <span class="chip">Không tham gia đợt</span>')+'</td><td>'+esc(l.dept)+'</td><td><input type="number" min="0" max="100" value="'+l.pct+'" data-chg="pct" data-id="'+l.id+'"'+(inDot(l)?'':' disabled title="Chưa chọn tham gia đợt thi"')+' aria-label="Định mức phần trăm của '+esc(l.name)+'"> <span class="muted">= '+l.quota+' ca</span></td><td><button class="btn sm" data-act="busy" data-id="'+l.id+'">'+(l.busy.length||l.teach.length?'<span class="chip warn">Dạy '+l.teach.length+' ca &middot; Bận '+l.busy.length+' buổi</span>':'Khai báo')+'</button>'+(l.busy.length||l.teach.length?' <button class="btn sm ghost danger" data-act="clear-schedule" data-id="'+l.id+'" title="Xóa toàn bộ lịch dạy và lịch bận của giảng viên này">Xóa lịch</button>':'')+' </td><td class="r"><button class="btn sm ghost" data-act="edit-lec" data-id="'+l.id+'">Sửa</button> <button class="btn sm ghost danger" data-act="del-lec" data-id="'+l.id+'">Xóa</button></td></tr>').join('');
 }
 function lecView(){
-  return head('Quản lý giảng viên','Danh sách giảng viên lấy trực tiếp từ SQL Server. Định mức và lịch dạy/bận được lưu trong cơ sở dữ liệu.',
-    '<button class="btn pri" data-act="refresh-lec">'+IC.refresh+'Làm mới dữ liệu</button><button class="btn" data-act="quota-all">Đặt định mức chung</button><button class="btn" data-act="pick-teach-file">'+IC.upload+'Import lịch dạy</button><button class="btn" data-act="pick-busy-file">'+IC.upload+'Import lịch bận</button><button class="btn danger" data-act="clear-all-teaching" title="Xóa toàn bộ lịch dạy của tất cả giảng viên">'+IC.x+' Xóa tất cả lịch dạy</button><button class="btn danger" data-act="clear-all-busy" title="Xóa toàn bộ lịch bận của tất cả giảng viên">'+IC.x+' Xóa tất cả lịch bận</button><button class="btn" data-act="pick-dot-lec">Chọn GV tham gia đợt</button><button class="btn pri" data-act="add-lec">'+IC.plus+'Thêm giảng viên</button>')+
+  return head('Quản lý giảng viên','Tìm giảng viên, đặt định mức và cập nhật lịch dạy/bận.')+
+    '<div class="lec-action-bar">'+
+      '<section class="lec-action-group primary"><span class="lec-action-label">Giảng viên</span><div class="lec-action-buttons"><button class="btn pri" data-act="add-lec">'+IC.plus+'Thêm giảng viên</button><button class="btn" data-act="pick-dot-lec">Chọn GV tham gia đợt</button><button class="btn" data-act="quota-all">Đặt định mức chung</button><button class="btn" data-act="refresh-lec">'+IC.refresh+'Làm mới</button></div></section>'+
+      '<section class="lec-action-group"><span class="lec-action-label">Nhập dữ liệu</span><div class="lec-action-buttons"><button class="btn" data-act="pick-teach-file">'+IC.upload+'Import lịch dạy</button><button class="btn" data-act="pick-busy-file">'+IC.upload+'Import lịch bận</button></div></section>'+
+      '<section class="lec-action-group danger"><span class="lec-action-label">Xóa lịch hàng loạt</span><div class="lec-action-buttons"><button class="btn danger" data-act="clear-all-teaching" title="Xóa toàn bộ lịch dạy của tất cả giảng viên">'+IC.x+'Xóa tất cả lịch dạy</button><button class="btn danger" data-act="clear-all-busy" title="Xóa toàn bộ lịch bận của tất cả giảng viên">'+IC.x+'Xóa tất cả lịch bận</button></div></section>'+
+    '</div>'+
     '<input type="file" id="fileTeach" data-chg="teach-file" accept=".xlsx,.xls,.csv,.txt,.tsv" hidden>'+
     '<input type="file" id="fileBusy" data-chg="busy-file" accept=".xlsx,.xls,.csv,.txt,.tsv" hidden>'+
-    (pendBusy?'<div class="panel"><h2>Kiểm tra import lịch bận</h2><p class="sub">'+esc(pendBusy.name)+' · '+pendBusy.rows.length+' dòng hợp lệ · '+pendBusy.errors.length+' dòng lỗi</p><p class="hint"><b>Họ tên</b> được đối chiếu không phân biệt hoa/thường, dấu và khoảng trắng thừa. <b>Ngày</b> 22/1/2026 và 22/01/2026 được chuẩn hóa thành cùng ngày. “Cả ngày” sẽ tạo cả Sáng và Chiều. Nếu cùng GV/ngày/buổi có nhiều lý do, hệ thống giữ lý do có mức ưu tiên cao nhất.</p>'+importSummary(pendBusy,'lịch bận')+'<div class="tools"><button class="btn pri" data-act="apply-busy"'+(pendBusy.rows.length&&!pendBusy.errors.length?'':' disabled')+'>Nhập lịch bận</button><button class="btn" data-act="cancel-busy">Hủy</button></div></div>':'')+
-    (pendTeach?'<div class="panel"><h2>Kiểm tra lịch dạy</h2><p class="sub">'+esc(pendTeach.name)+' · '+pendTeach.rows.length+' ca học · '+pendTeach.teachers.length+' giảng viên</p><p class="hint">Chỉ import lịch dạy cho giảng viên đã có trong SQL Server. Lịch dạy được lưu riêng trong <b>LichDayGV</b> và là ràng buộc cứng 100%. Không tự tạo giảng viên mới và không ghi vào <b>LichBanGV</b>.</p><div class="tools"><button class="btn pri" data-act="apply-teach"'+(pendTeach.rows.length?'':' disabled')+'>Nhập lịch dạy</button><button class="btn" data-act="cancel-teach">Hủy</button></div></div>':'')+
-    '<div class="panel"><div class="tools"><div class="grow"><input type="text" id="lq" data-inp="lq" placeholder="Tìm theo tên giảng viên" value="'+esc(F.lq)+'" aria-label="Tìm giảng viên"></div><select data-chg="ld" aria-label="Lọc theo khoa"><option value="">Tất cả khoa</option>'+depts().map(d=>'<option'+(F.ld===d?' selected':'')+'>'+esc(d)+'</option>').join('')+'</select><span class="muted" id="lcount"></span></div><div class="tw"><table><thead><tr><th>Họ tên</th><th>Khoa</th><th>Định mức (%)</th><th>Lịch dạy / bận</th><th></th></tr></thead><tbody id="lecRows">'+lecRows()+'</tbody></table></div><p class="hint">Dữ liệu giảng viên được lấy từ SQL Server. Định mức được lưu theo tỷ lệ % và số ca quy định được tính theo tổng nhu cầu của đợt thi.</p></div>';
+    (pendBusy?'<div class="panel"><h2>Kiểm tra import lịch bận</h2><p class="sub">'+esc(pendBusy.name)+' · '+pendBusy.rows.length+' dòng hợp lệ · '+pendBusy.errors.length+' dòng lỗi</p><p class="hint">Tên được ghép không phân biệt dấu; ngày được chuẩn hóa. “Cả ngày” tạo Sáng và Chiều; nếu trùng, giữ lý do ưu tiên cao nhất.</p>'+importSummary(pendBusy,'lịch bận')+'<div class="tools"><button class="btn pri" data-act="apply-busy"'+(pendBusy.rows.length&&!pendBusy.errors.length?'':' disabled')+'>Nhập lịch bận</button><button class="btn" data-act="cancel-busy">Hủy</button></div></div>':'')+
+    (pendTeach?'<div class="panel"><h2>Kiểm tra lịch dạy</h2><p class="sub">'+esc(pendTeach.name)+' · '+pendTeach.rows.length+' ca học · '+pendTeach.teachers.length+' giảng viên</p><p class="hint">Chỉ cập nhật giảng viên trong danh sách; lịch dạy giúp tránh trùng ca thi.</p><div class="tools"><button class="btn pri" data-act="apply-teach"'+(pendTeach.rows.length?'':' disabled')+'>Nhập lịch dạy</button><button class="btn" data-act="cancel-teach">Hủy</button></div></div>':'')+
+    '<div class="panel"><div class="tools"><div class="grow"><input type="text" id="lq" data-inp="lq" placeholder="Tìm theo tên giảng viên" value="'+esc(F.lq)+'" aria-label="Tìm giảng viên"></div><select data-chg="ld" aria-label="Lọc theo khoa"><option value="">Tất cả khoa</option>'+depts().map(d=>'<option'+(F.ld===d?' selected':'')+'>'+esc(d)+'</option>').join('')+'</select><span class="muted" id="lcount"></span></div><div class="tw"><table><thead><tr><th>Họ tên</th><th>Khoa</th><th>Định mức (%)</th><th>Lịch dạy / bận</th><th></th></tr></thead><tbody id="lecRows">'+lecRows()+'</tbody></table></div><p class="hint">Tìm/lọc giảng viên, sửa định mức hoặc cập nhật lịch dạy/bận.</p></div>';
 }
 function importSummary(p,what){
   let h='<div class="tools"><span class="chip ok">'+p.rows.length+' dòng hợp lệ</span><span class="chip '+(p.errors.length?'bad':'')+'">'+p.errors.length+' dòng lỗi</span>'+(p.extra||'')+'</div>';
@@ -198,7 +235,7 @@ function examForm(e){
   const years=[];const now=new Date().getFullYear();for(let y=2023;y<=now+3;y++)years.push(y+'-'+(y+1));
   const yh=e&&e.nam_hoc||latest.NamHoc||years.find(x=>x.startsWith(String(now)))||years[years.length-1];
   openModal({title:e?'Sửa ca thi':'Nhập ca thi',wide:true,body:
-    '<p class="hint">Ngày thi là ngày thực tế. Hệ thống tự gắn ca vào đợt thi hiện tại.</p>'+    '<label class="f"><span>Ngày thi</span><input type="date" id="exDate" value="'+(e?e.date:'')+'"></label>'+    '<label class="f"><span>Tiết / ca thi</span><select id="exPeriod">'+EXAM_SLOTS.map(x=>'<option value="'+x[0]+'"'+((e?e.period===x[0]:false)?' selected':'')+'>'+x[0]+'</option>').join('')+'</select></label>'+    '<label class="f"><span>Loại ca</span><select id="exKind"><option value="LT"'+(e&&e.kind==='LT'?' selected':'')+'>Lý thuyết</option><option value="TL"'+(e&&e.kind==='TL'?' selected':'')+'>Tự luận</option></select></label>'+    '<label class="f"><span>Số giảng viên cần cấp</span><input type="number" id="exNeed" min="1" max="30" value="'+(e?e.need:2)+'"></label><div class="err" id="exErr"></div>',foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="save-exam" data-id="'+(e?e.id:'')+'">'+(e?'Lưu thay đổi':'Lưu vào SQL Server')+'</button>'});
+    '<p class="hint">Ngày thi là ngày thực tế. Hệ thống tự gắn ca vào đợt thi hiện tại.</p>'+   '<label class="f"><span>Ngày thi</span><input type="date" id="exDate" value="'+(e?e.date:'')+'"></label>'+    '<label class="f"><span>Tiết / ca thi</span><select id="exPeriod">'+EXAM_SLOTS.map(x=>'<option value="'+x[0]+'"'+((e?e.period===x[0]:false)?' selected':'')+'>'+x[0]+'</option>').join('')+'</select></label>'+    '<label class="f"><span>Loại ca</span><select id="exKind"><option value="LT"'+(e&&e.kind==='LT'?' selected':'')+'>Lý thuyết</option><option value="TL"'+(e&&e.kind==='TL'?' selected':'')+'>Tự luận</option></select></label>'+    '<label class="f"><span>Số giảng viên cần cấp</span><input type="number" id="exNeed" min="1" max="30" value="'+(e?e.need:2)+'"></label><div class="err" id="exErr"></div>',foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="save-exam" data-id="'+(e?e.id:'')+'">'+(e?'Lưu thay đổi':'Lưu ca thi')+'</button>'});
 }
 
 function examView(){
@@ -214,9 +251,9 @@ function examView(){
       '<div class="tools" style="margin-top:12px"><button class="btn pri" data-act="do-import-exam"'+(pend.rows.length?'':' disabled')+'>'+(S.exams.length?'Thay lịch ca thi hiện tại bằng '+pend.rows.length+' dòng':'Nhập '+pend.rows.length+' ca thi')+'</button><button class="btn" data-act="cancel-import-exam">Hủy</button></div></div>';
   }
   const dates=[...new Set(S.exams.map(e=>e.date))].sort();
-  return head('Quản lý lịch thi','Nhập ngày thi thực tế → Tiết/ca → Loại ca → Số giảng viên cần. Dữ liệu được lưu trực tiếp vào SQL Server.',
+  return head('Quản lý lịch thi','Thêm ca thi hoặc import Excel/CSV theo mẫu 4 cột.',
     '<button class="btn danger" data-act="clear-all-exams" title="Xóa toàn bộ ca thi">'+IC.x+' Xóa tất cả ca thi</button><button class="btn pri" data-act="add-exam">'+IC.plus+'Nhập ca thi</button>')+
-    '<div class="panel"><h2>Import ca thi của bạn</h2><p class="sub">Excel hoặc CSV gồm 4 cột theo thứ tự: Ngày thi, Ca/tiết, Số giảng viên cần, Loại ca (Lý thuyết/Tự luận). Có thể đặt hàng tiêu đề. Ví dụ ca/tiết: 1 → 2.</p><div class="drop"><p>Chọn file Excel hoặc CSV của bạn</p><div class="tools" style="justify-content:center;margin:0"><button class="btn pri" data-act="pick-exam-file">'+IC.upload+'Import ca thi</button></div></div><input type="file" id="fileExam" data-chg="file-exam" accept=".xlsx,.xls,.csv,.txt,.tsv" hidden></div>'+pv+
+    '<div class="panel"><h2>Import ca thi của bạn</h2><p class="sub">4 cột: Ngày thi, Ca/tiết, Số giảng viên cần, Loại ca (Lý thuyết/Tự luận). Có thể thêm hàng tiêu đề.</p><div class="drop"><p>Chọn file Excel hoặc CSV của bạn</p><div class="tools" style="justify-content:center;margin:0"><button class="btn pri" data-act="pick-exam-file">'+IC.upload+'Import ca thi</button></div></div><input type="file" id="fileExam" data-chg="file-exam" accept=".xlsx,.xls,.csv,.txt,.tsv" hidden></div>'+pv+
     '<div class="panel"><h2>Danh sách ca thi</h2><div class="tools"><div class="grow"><input type="text" data-inp="eq" placeholder="Tìm theo ngày hoặc ca/tiết" value="'+esc(F.eq)+'" aria-label="Tìm ca thi"></div><select data-chg="ed" aria-label="Lọc theo ngày"><option value="">Tất cả ngày</option>'+dates.map(d=>'<option value="'+d+'"'+(F.ed===d?' selected':'')+'>'+wd(d)+' '+fmtD(d)+'</option>').join('')+'</select></div><div class="tw"><table><thead><tr><th>Ngày</th><th>Ca/tiết</th><th>Buổi</th><th>Loại ca</th><th class="c">Cần cấp</th><th>Đã xếp</th></tr></thead><tbody id="examRows">'+examRows()+'</tbody></table></div></div>';
 }
 function consView(){
@@ -228,9 +265,9 @@ function consView(){
       : '<label class="w">Mức ưu tiên <input type="range" min="1" max="10" value="'+c.w+'" data-inp="soft-w" data-id="'+s.id+'"'+(c.on?'':' disabled')+' aria-label="Mức ưu tiên"><output>'+c.w+'</output></label>';
     return '<div class="cons"><label class="sw"><input type="checkbox" data-chg="soft-on" data-id="'+s.id+'"'+(c.on?' checked':'')+' aria-label="Bật '+esc(s.name)+'"><span></span></label><div class="t"><b>'+s.name+'</b><span>'+s.desc+'</span></div>'+control+'</div>';
   }).join('');
-  return head('Quản lý ràng buộc','Xem ràng buộc cứng và cấu hình ràng buộc mềm cho thuật toán xếp lịch.','<button class="btn pri" data-act="reset-soft">Khôi phục mặc định</button>')+
-    '<div class="panel"><h2>Ràng buộc cứng</h2><p class="sub">Luôn được áp dụng khi xếp tự động. Mức 1 của lịch bận là ràng buộc cứng tuyệt đối.</p>'+hard+'</div>'+
-    '<div class="panel"><h2>Ràng buộc mềm</h2><p class="sub">Mức 2 và mức 3 của lịch bận được hệ thống tự chấm theo Lý do; người dùng không nhập tay mức ưu tiên.</p>'+soft+'</div>';
+  return head('Quản lý ràng buộc','Ràng buộc cứng luôn áp dụng; cấu hình các ràng buộc mềm.','<button class="btn pri" data-act="reset-soft">Khôi phục mặc định</button>')+
+    '<div class="panel"><h2>Ràng buộc cứng</h2><p class="sub">Luôn áp dụng; mức bận 1 là bắt buộc.</p>'+hard+'</div>'+
+    '<div class="panel"><h2>Ràng buộc mềm</h2><p class="sub">Mức bận 2–3 được tự động gán theo lý do.</p>'+soft+'</div>';
 }
 
 function schedView(){
@@ -258,7 +295,7 @@ function schedView(){
   const pcHtml=pre?'<div class="panel"><h2>Kết quả kiểm tra trước khi xếp</h2><ul style="list-style:none;padding:0;margin:8px 0 0">'+pre.list.map(x=>'<li class="pc '+x.lv+'">'+IC[x.lv]+'<span>'+esc(x.t)+'</span></li>').join('')+'</ul>'+(pre.blocked?'<div class="tools" style="margin-top:8px"><button class="btn" data-act="force-run">Vẫn chạy xếp</button></div>':'')+'</div>':'';
   return head('Xếp lịch','Kiểm tra dữ liệu, xếp tự động, chỉnh tay và khóa các phân công cần giữ.',
     '<button class="btn" data-act="precheck">Kiểm tra trước khi xếp</button><button class="btn pri" data-act="auto">Xếp tự động</button>')+
-    '<div class="two"><div>'+pcHtml+'<div class="panel"><div class="tools"><h2 style="margin-right:auto">Bảng phân công</h2><select data-chg="sd" aria-label="Lọc theo ngày"><option value="">Tất cả ngày</option>'+dates.map(d=>'<option value="'+d+'"'+(F.sd===d?' selected':'')+'>'+wd(d)+' '+fmtD(d)+'</option>').join('')+'</select><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-chg="lack"'+(F.lack?' checked':'')+'>Chỉ ca thiếu người</label></div><div class="tools"><button class="btn pri sm" data-act="publish-assignments">Lưu phân công lên hệ thống</button><button class="btn sm" data-act="clear-unlocked">Xóa phần chưa khóa</button><button class="btn sm" data-act="save-hist">Lưu bản này vào lịch sử</button></div>'+board+'</div></div>'+side+'</div>';
+    '<div class="two"><div>'+pcHtml+'<div class="panel"><div class="tools"><h2 style="margin-right:auto">Bảng phân công</h2><select data-chg="sd" aria-label="Lọc theo ngày"><option value="">Tất cả ngày</option>'+dates.map(d=>'<option value="'+d+'"'+(F.sd===d?' selected':'')+'>'+wd(d)+' '+fmtD(d)+'</option>').join('')+'</select><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-chg="lack"'+(F.lack?' checked':'')+'>Chỉ ca thiếu người</label></div><div class="tools assignment-actions"><button class="btn pri sm" data-act="publish-assignments">Lưu phân công lên hệ thống</button><button class="btn sm" data-act="clear-unlocked" title="Chỉ xóa các chỉnh sửa chưa khóa trên bảng">Xóa bản nháp chưa khóa</button><button class="btn sm" data-act="save-hist">Lưu bản này vào lịch sử</button><button class="btn sm ghost danger" data-act="unpublish-assignments" title="Thu hồi phân công đã công bố của đợt thi hiện tại khỏi lịch giảng viên">Thu hồi lịch đã công bố</button></div><p class="hint assignment-help">“Xóa bản nháp chưa khóa” chỉ tác động trên bảng này. Muốn xóa lịch giảng viên đang xem, hãy chọn “Thu hồi lịch đã công bố”.</p><div class="schedule-sharing-tools"><div class="schedule-sharing-copy"><b>Quyền xem lịch giảng viên</b><p class="schedule-sharing-help">Làm mới sẽ đọc lại quyền hiện tại từ máy chủ.</p><p class="hint schedule-sharing-status" id="scheduleSharingStatus" role="status">Đang tải trạng thái chia sẻ…</p></div><div class="schedule-sharing-actions"><button class="btn sm ghost" data-act="refresh-schedule-sharing" title="Đọc lại quyền chia sẻ hiện tại từ máy chủ">'+IC.refresh+'Làm mới quyền chia sẻ</button><button class="btn sm pri" data-act="toggle-schedule-sharing" disabled>Đang tải…</button></div></div>'+board+'</div></div>'+side+'</div>';
 }
 function repView(){
   const tabs=[['quota','Ca đã gác so với định mức'],['export','Xuất lịch'],['hist','Lịch sử các lần xếp']];
@@ -285,7 +322,7 @@ function repView(){
     }).join('');
     body='<div class="panel"><div class="tw"><table><thead><tr><th>Thời gian</th><th>Cách xếp</th><th class="c">Lượt gác</th><th class="c">Tỷ lệ thỏa</th><th class="c">Mức S1</th><th>Ca gãy</th><th>Tiết trống</th><th class="c">Phạt S1</th><th></th></tr></thead><tbody>'+(rows||'<tr><td colspan="9" class="empty">Chưa có lần xếp nào được lưu. Mỗi lần xếp tự động sẽ được lưu tại đây.</td></tr>')+'</tbody></table></div></div>';
   }
-  return head('Thống kê, báo cáo','Đối chiếu ca đã gác với định mức, xuất lịch và xem lại các lần xếp.')+'<div class="tabs" role="tablist">'+tabs.map(t=>'<button role="tab" class="'+(tab6===t[0]?'on':'')+'" data-act="tab6" data-t="'+t[0]+'">'+t[1]+'</button>').join('')+'</div>'+body;
+  return head('Thống kê, báo cáo','Xem định mức, xuất lịch và lịch sử xếp.')+'<div class="tabs" role="tablist">'+tabs.map(t=>'<button role="tab" class="'+(tab6===t[0]?'on':'')+'" data-act="tab6" data-t="'+t[0]+'">'+t[1]+'</button>').join('')+'</div>'+body;
 }
 function exportData(mode){
   const ex=S.exams.slice().sort(cmpEx);let head,rows=[];

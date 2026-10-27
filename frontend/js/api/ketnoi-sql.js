@@ -11,7 +11,7 @@ async function refreshLecturers(showToast=true){
     const old=new Map(S.lecs.map(l=>[String(l.id),l]));
     S.lecs=items.map(x=>{
       const o=old.get(String(x.MaGV))||{};
-      return {id:x.MaGV,name:x.HoTen,dept:x.TenKhoa||x.TenBoMon||'Khoa CNTT',ma_bo_mon:x.MaBoMon,pct:Number(x.TyLeDinhMuc??o.pct??0),quota:Number(x.SoCaQuyDinh??o.quota??0),quota_authoritative:x.SoCaQuyDinh!=null,inDot:window.__MA_DOT?x.MaDot!=null:true,busy:o.busy||[],teach:o.teach||[]};
+      return {id:x.MaGV,name:x.HoTen,dept:x.TenKhoa||x.TenBoMon||'Khoa CNTT',ma_bo_mon:x.MaBoMon,email:x.Email||'',pct:Number(x.TyLeDinhMuc??o.pct??0),quota:Number(x.SoCaQuyDinh??o.quota??0),quota_authoritative:x.SoCaQuyDinh!=null,inDot:window.__MA_DOT?x.MaDot!=null:true,busy:o.busy||[],teach:o.teach||[]};
     });
     for(const l of S.lecs){
       try{
@@ -26,9 +26,9 @@ async function refreshLecturers(showToast=true){
       }catch(_){ }
     }
     save();render();
-    if(showToast)toast('Đã tải '+S.lecs.length+' giảng viên từ SQL Server.');
+    if(showToast)toast('Đã làm mới danh sách giảng viên.');
     return true;
-  }catch(e){if(showToast)toast('SQL Server chưa kết nối: '+e.message);return false}
+  }catch(e){if(showToast)toast('Không thể làm mới danh sách giảng viên. Vui lòng thử lại hoặc liên hệ quản trị viên.');return false}
 }
 
 async function refreshExamData(showToast=false){
@@ -43,10 +43,10 @@ async function refreshExamData(showToast=false){
       const oldE=old.get(x.MaCa); const slot=EXAM_SLOTS.find(s=>s[1]===Number(x.TuTiet)&&s[2]===Number(x.DenTiet));
       return {id:oldE?oldE.id:(S.nid++),ma_ca:x.MaCa,code:x.MaCa,name:'Ca thi',dept:'',room:x.PhongThi||'',asg:oldE?oldE.asg:[],date:String(x.NgayThi).slice(0,10),ses:Number(x.Buoi)||1,half:Number(x.Buoi)<=1?'S':'C',period:slot?slot[0]:Number(x.TuTiet)+' → '+Number(x.DenTiet),need:Number(x.SoGVCanCap),kind:x.HinhThucThi==='Tự luận'?'TL':'LT',ma_dot:x.MaDot,hoc_ky:x.HocKy,nam_hoc:x.NamHoc,so_da_cap:Number(x.SoGVDaCap||0)};
     });
-    save();render();if(showToast)toast('Đã tải '+S.exams.length+' ca thi từ SQL Server.');return true;
-  }catch(e){if(showToast)toast('Không tải được ca thi: '+e.message);return false}
+    save();render();if(showToast)toast('Đã làm mới danh sách ca thi.');return true;
+  }catch(e){if(showToast)toast('Không thể làm mới danh sách ca thi. Vui lòng thử lại hoặc liên hệ quản trị viên.');return false}
 }
 
 async function bootSQL(){
-  try{const h=await API.health();await refreshLecturers(false);await refreshExamData(false);toast('Đã kết nối '+h.database+' trên '+h.server+'.')}catch(e){toast('Chưa kết nối SQL Server. Hãy chạy backend rồi tải lại trang.')}}
+  try{await API.health();await refreshLecturers(false);await refreshExamData(false);toast('Đã làm mới dữ liệu.')}catch(e){toast('Không thể làm mới dữ liệu. Vui lòng thử lại hoặc liên hệ quản trị viên.')}}
 

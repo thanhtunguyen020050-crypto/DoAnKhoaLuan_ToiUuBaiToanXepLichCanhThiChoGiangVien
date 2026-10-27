@@ -187,17 +187,115 @@ def change_password(x: ChangePasswordIn):
     except Exception as e:
         raise HTTPException(503, 'Không thể đổi mật khẩu. Hãy kiểm tra migration SQL. ' + str(e))
 
-def my_schedule(ma_gv: str):
+def _schedule_sharing_enabled(cur) -> bool:
+    try:
+        cur.execute('SELECT ChoPhepXemTatCa FROM dbo.CauHinhCongBoLich WHERE ID=1')
+        row = cur.fetchone()
+        return bool(row and row[0])
+    except Exception as e:
+        message = str(e).casefold()
+        if 'cauhinhcongbolich' in message and ('invalid object name' in message or '208' in message):
+            return False
+        raise
+
+
+def get_schedule_sharing():
+    try:
+        with get_connection() as cn:
+            cur = cn.cursor()
+            cur.execute('SELECT ChoPhepXemTatCa,CapNhatLuc,NguoiCapNhat FROM dbo.CauHinhCongBoLich WHERE ID=1')
+            row = cur.fetchone()
+            return {
+                'enabled': bool(row and row[0]),
+                'updated_at': row[1].isoformat() if row and row[1] else None,
+                'updated_by': row[2] if row else None,
+            }
+    except Exception as e:
+        message = str(e).casefold()
+        if 'cauhinhcongbolich' in message and ('invalid object name' in message or '208' in message):
+            return {'enabled': False, 'updated_at': None, 'updated_by': None, 'migration_required': True}
+        raise HTTPException(503, 'Không đọc được cấu hình chia sẻ lịch. Hãy áp dụng migration SQL 20261027_schedule_sharing.sql. ' + str(e))
+
+
+def set_schedule_sharing(enabled: bool, updated_by: str):
+    try:
+        with get_connection() as cn:
+            cur = cn.cursor()
+            cur.execute('''UPDATE dbo.CauHinhCongBoLich
+                              SET ChoPhepXemTatCa=?,CapNhatLuc=SYSDATETIME(),NguoiCapNhat=?
+                              OUTPUT INSERTED.ChoPhepXemTatCa
+                            WHERE ID=1''', bool(enabled), updated_by)
+            row = cur.fetchone()
+            if not row:
+                cur.execute('''INSERT INTO dbo.CauHinhCongBoLich(ID,ChoPhepXemTatCa,NguoiCapNhat)
+                               OUTPUT INSERTED.ChoPhepXemTatCa VALUES(1,?,?)''', bool(enabled), updated_by)
+                row = cur.fetchone()
+            cn.commit()
+            return {'ok': True, 'enabled': bool(row[0])}
+    except Exception as e:
+        raise HTTPException(503, 'Không lưu được cấu hình chia sẻ lịch. Hãy áp dụng migration SQL 20261027_schedule_sharing.sql. ' + str(e))
+
+
+def schedule_access(ma_gv: str):
     try:
         with get_connection() as cn:
             cur = cn.cursor()
             _require_identity(cur, ma_gv)
-            cur.execute('SELECT c.MaCa,c.MaDot,CONVERT(varchar(10),c.NgayThi,23) NgayThi,c.Thu,\n                                  c.TuTiet,c.DenTiet,c.Buoi,c.HinhThucThi,c.PhongThi\n                           FROM dbo.PhanCongCoiThi p JOIN dbo.CaThi c ON c.MaCa=p.MaCa\n                           WHERE p.MaGV=? ORDER BY c.NgayThi,c.TuTiet,c.MaCa', ma_gv)
+            enabled = _schedule_sharing_enabled(cur)
+            lecturers = []
+            if enabled:
+                cur.execute("SELECT MaGV,HoTen FROM dbo.GiangVien WHERE TrangThai=N'Đang công tác' ORDER BY HoTen,MaGV")
+                lecturers = _rows(cur)
+            return {'can_view_all': enabled, 'lecturers': lecturers}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(503, 'Không đọc được quyền xem lịch. Hãy kiểm tra migration SQL chia sẻ lịch. ' + str(e))
+
+
+def my_schedule(ma_gv: str, requesting_ma_gv: str | None = None):
+    try:
+        with get_connection() as cn:
+            cur = cn.cursor()
+            requester = (requesting_ma_gv or ma_gv).strip()
+            target = ma_gv.strip()
+            _require_identity(cur, requester)
+            if target.casefold() != requester.casefold() and not _schedule_sharing_enabled(cur):
+                raise HTTPException(403, 'Chỉ được xem lịch của mình khi Admin chưa bật chia sẻ lịch.')
+            cur.execute('''SELECT c.MaCa,c.MaDot,CONVERT(varchar(10),c.NgayThi,23) NgayThi,c.Thu,
+                                  c.TuTiet,c.DenTiet,c.Buoi,c.HinhThucThi,c.PhongThi,p.MaGV,g.HoTen
+                           FROM dbo.PhanCongCoiThi p
+                           JOIN dbo.CaThi c ON c.MaCa=p.MaCa
+                           JOIN dbo.GiangVien g ON g.MaGV=p.MaGV
+                           WHERE p.MaGV=? AND g.TrangThai=N'Đang công tác'
+                           ORDER BY c.NgayThi,c.TuTiet,c.MaCa''', target)
             return {'items': _rows(cur)}
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(503, 'Không đọc được lịch cá nhân: ' + str(e))
+
+
+def all_schedules(requesting_ma_gv: str):
+    try:
+        with get_connection() as cn:
+            cur = cn.cursor()
+            _require_identity(cur, requesting_ma_gv)
+            if not _schedule_sharing_enabled(cur):
+                raise HTTPException(403, 'Admin chưa bật quyền xem lịch của tất cả giảng viên.')
+            cur.execute('''SELECT p.MaGV,g.HoTen,c.MaCa,c.MaDot,
+                                  CONVERT(varchar(10),c.NgayThi,23) NgayThi,c.Thu,
+                                  c.TuTiet,c.DenTiet,c.Buoi,c.HinhThucThi,c.PhongThi
+                           FROM dbo.PhanCongCoiThi p
+                           JOIN dbo.CaThi c ON c.MaCa=p.MaCa
+                           JOIN dbo.GiangVien g ON g.MaGV=p.MaGV
+                           WHERE g.TrangThai=N'Đang công tác'
+                           ORDER BY c.NgayThi,c.TuTiet,g.HoTen,p.MaGV,c.MaCa''')
+            return {'items': _rows(cur)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(503, 'Không đọc được lịch của các giảng viên: ' + str(e))
 
 def available_lecturers(ma_gv: str):
     try:
@@ -306,7 +404,27 @@ def notifications(ma_gv: str):
         with get_connection() as cn:
             cur = cn.cursor()
             _require_identity(cur, ma_gv)
-            cur.execute('SELECT ID,TieuDe,NoiDung,Loai,DaDoc,TaoLuc,YeuCauDoiCaID\n                           FROM dbo.ThongBao WHERE MaGVNhan=?\n                           ORDER BY TaoLuc DESC', ma_gv)
+            # Older invitations may have been accepted before responding marked them read.
+            cur.execute('''
+                UPDATE t
+                SET DaDoc = 1
+                FROM dbo.ThongBao AS t
+                JOIN dbo.YeuCauBaoBan AS y ON y.MaYeuCau = t.YeuCauBaoBanID
+                WHERE t.MaGVNhan = ? AND t.DoiTuongNhan = 'Lecturer'
+                  AND t.Loai = 'BusyCoverRequested' AND t.DaDoc = 0
+                  AND t.MaGVNhan = y.MaGVThayTheDeNghi
+                  AND y.TrangThaiXacNhanThayThe IN ('ACCEPTED', 'DECLINED')
+            ''', ma_gv)
+            cn.commit()
+            cur.execute('''
+                SELECT t.ID,t.TieuDe,t.NoiDung,t.Loai,t.DaDoc,t.TaoLuc,
+                       t.YeuCauDoiCaID,t.YeuCauBaoBanID,
+                       CASE WHEN t.MaGVNhan = y.MaGVThayTheDeNghi THEN y.TrangThaiXacNhanThayThe ELSE 'SUPERSEDED' END AS TrangThaiPhanHoiThayThe
+                FROM dbo.ThongBao t
+                LEFT JOIN dbo.YeuCauBaoBan y ON y.MaYeuCau = t.YeuCauBaoBanID
+                WHERE t.MaGVNhan=?
+                ORDER BY t.TaoLuc DESC
+            ''', ma_gv)
             return {'items': _rows(cur)}
     except HTTPException:
         raise
@@ -331,7 +449,7 @@ def admin_notifications():
     try:
         with get_connection() as cn:
             cur = cn.cursor()
-            cur.execute("SELECT TOP 100 ID,TieuDe,NoiDung,Loai,DaDoc,TaoLuc,YeuCauDoiCaID\n                           FROM dbo.ThongBao WHERE DoiTuongNhan='Admin'\n                           ORDER BY TaoLuc DESC")
+            cur.execute("SELECT TOP 100 t.ID,t.TieuDe,t.NoiDung,t.Loai,t.DaDoc,t.TaoLuc,t.YeuCauDoiCaID,t.YeuCauBaoBanID\n                           FROM dbo.ThongBao t WHERE t.DoiTuongNhan='Admin'\n                             AND (t.Loai <> 'BusyRequest' OR EXISTS (SELECT 1 FROM dbo.YeuCauBaoBan y WHERE y.MaYeuCau=t.YeuCauBaoBanID AND (y.TrangThai = 'PENDING' AND y.TrangThaiXacNhanThayThe='ACCEPTED')))\n                           ORDER BY t.TaoLuc DESC")
             return {'items': _rows(cur)}
     except Exception as e:
         raise HTTPException(503, 'Không đọc được thông báo Admin: ' + str(e))
@@ -341,7 +459,7 @@ def admin_accounts():
     try:
         with get_connection() as cn:
             cur = cn.cursor()
-            cur.execute('SELECT gv.MaGV,gv.HoTen,gv.Email,\n                                  tk.IsActive,tk.MustChangePassword,\n                                  gv.TrangThai AS TrangThaiGiangVien,tk.CreatedAt,\n                                  tk.PasswordChangedAt,tk.LastLoginAt,\n                                  CASE WHEN tk.MaGV IS NULL THEN CAST(0 AS bit)\n                                       ELSE CAST(1 AS bit) END AS AccountStatusKnown\n                           FROM dbo.GiangVien gv\n                           LEFT JOIN dbo.TaiKhoanGiangVien tk ON tk.MaGV=gv.MaGV\n                           ORDER BY gv.HoTen,gv.MaGV')
+            cur.execute('SELECT gv.MaGV,gv.HoTen,gv.Email,\n                                  CASE WHEN gv.TrangThai=N\'Đang công tác\' THEN ISNULL(tk.IsActive,0) ELSE CAST(0 AS bit) END AS IsActive,tk.MustChangePassword,\n                                  gv.TrangThai AS TrangThaiGiangVien,tk.CreatedAt,\n                                  tk.PasswordChangedAt,tk.LastLoginAt,\n                                  CASE WHEN tk.MaGV IS NULL THEN CAST(0 AS bit)\n                                       ELSE CAST(1 AS bit) END AS AccountStatusKnown\n                           FROM dbo.GiangVien gv\n                           LEFT JOIN dbo.TaiKhoanGiangVien tk ON tk.MaGV=gv.MaGV\n                           ORDER BY gv.HoTen,gv.MaGV')
             return {'items': _rows(cur)}
     except Exception as e:
         raise HTTPException(503, 'Không đọc được danh sách tài khoản user: ' + str(e))
