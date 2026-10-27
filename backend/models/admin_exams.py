@@ -201,17 +201,55 @@ def set_common_quota(x: DinhMucChungIn):
     try:
         with get_connection() as cn:
             cur = cn.cursor()
-            cur.execute('EXEC dbo.sp_DatDinhMucChung ?,?,?', x.ma_dot, x.ty_le, x.ma_khoa)
-            result = {}
-            while True:
-                if cur.description:
-                    cols = [c[0] for c in cur.description]
-                    rows = cur.fetchall()
-                    if rows and 'TongNhuCau' in cols:
-                        result = dict(zip(cols, rows[-1]))
-                if not cur.nextset():
-                    break
+            cur.execute('SELECT 1 FROM dbo.DotThi WHERE MaDot=?', x.ma_dot)
+            if not cur.fetchone():
+                raise HTTPException(404, 'Đợt thi không tồn tại.')
+            if x.ma_khoa:
+                cur.execute('SELECT 1 FROM dbo.Khoa WHERE MaKhoa=?', x.ma_khoa)
+                if not cur.fetchone():
+                    raise HTTPException(400, 'Khoa không tồn tại.')
+
+            cur.execute(
+                """
+                UPDATE d
+                SET TyLeDinhMuc=?, GhiChu=N'Đặt định mức chung'
+                FROM dbo.DinhMucPhanCong d
+                JOIN dbo.GiangVien g ON g.MaGV=d.MaGV
+                JOIN dbo.BoMon bm ON bm.MaBoMon=g.MaBoMon
+                WHERE d.MaDot=?
+                  AND g.TrangThai=N'Đang công tác'
+                  AND (? IS NULL OR bm.MaKhoa=?)
+                """,
+                x.ty_le,
+                x.ma_dot,
+                x.ma_khoa,
+                x.ma_khoa,
+            )
+            updated = cur.rowcount
+            if updated == 0:
+                raise HTTPException(400, 'Không có giảng viên đã chọn tham gia đợt thi trong phạm vi áp dụng.')
+
+            cur.execute('EXEC dbo.sp_TinhDinhMucTheoTyLe ?', x.ma_dot)
+            while cur.nextset():
+                pass
+            cur.execute(
+                """
+                SELECT
+                    (SELECT ISNULL(SUM(SoGVCanCap),0) FROM dbo.CaThi WHERE MaDot=?) AS TongNhuCau,
+                    (SELECT ISNULL(SUM(SoCaQuyDinh),0) FROM dbo.DinhMucPhanCong WHERE MaDot=?) AS TongDinhMuc
+                """,
+                x.ma_dot,
+                x.ma_dot,
+            )
+            row = cur.fetchone()
             cn.commit()
-            return result or {'MaDot': x.ma_dot}
+            return {
+                'MaDot': x.ma_dot,
+                'TongNhuCau': int(row[0] or 0),
+                'TongDinhMuc': int(row[1] or 0),
+                'GiangVienCapNhat': updated,
+            }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(400, str(e))

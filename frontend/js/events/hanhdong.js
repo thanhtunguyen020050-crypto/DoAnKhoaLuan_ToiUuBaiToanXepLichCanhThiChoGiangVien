@@ -423,8 +423,8 @@ const A={
     if(!confirm('Ngừng công tác giảng viên '+l.name+' trên SQL Server?'))return;
     try{await API.deleteLecturer(l.id);S.exams.forEach(e=>{e.asg=e.asg.filter(a=>String(a.l)!==String(l.id))});S.lecs=S.lecs.filter(x=>x!==l);render();toast('Đã cập nhật trạng thái giảng viên trên SQL Server.')}catch(e){toast(e.message)}
   },
-  'quota-all'(){openModal({title:'Đặt định mức chung',body:'<p class="muted" style="margin-bottom:10px">Áp dụng cho '+(F.ld?'giảng viên khoa '+esc(F.ld):'tất cả giảng viên')+' đang hiển thị.</p><label class="f"><span>Định mức (%)</span><input type="number" id="qa" min="0" max="100" value="100"></label>',foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="do-quota-all">Áp dụng</button>'})},
-  async 'do-quota-all'(){const q=parseInt($('#qa').value,10);if(isNaN(q)||q<0||q>100)return;try{const dot=window.__MA_DOT;if(!dot){toast('Chưa có đợt thi để lưu định mức.');return}let maKhoa=null;if(F.ld)maKhoa=await API.resolveKhoa(F.ld);const r=await API.setCommonQuota(dot,q,maKhoa);closeModal();await refreshLecturers(false);render();toast('Đã lưu định mức chung '+q+'% vào SQL Server. Tổng định mức: '+r.TongDinhMuc+'/'+r.TongNhuCau+' ca.')}catch(e){toast(e.message)}},
+  'quota-all'(){const count=S.lecs.filter(l=>inDot(l)&&(!F.ld||l.dept===F.ld)).length;openModal({title:'Đặt định mức chung',body:'<p class="muted" style="margin-bottom:10px">Cập nhật tỷ lệ cho <b>'+count+' giảng viên đã chọn tham gia đợt thi</b>'+(F.ld?' thuộc khoa '+esc(F.ld):'')+'. Giảng viên chưa được chọn và tỷ lệ của họ sẽ không bị thay đổi.</p><label class="f"><span>Định mức (%)</span><input type="number" id="qa" min="0" max="100" value="100"></label>',foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="do-quota-all">Áp dụng</button>'})},
+  async 'do-quota-all'(){const q=parseInt($('#qa').value,10);if(isNaN(q)||q<0||q>100)return;try{const dot=window.__MA_DOT;if(!dot){toast('Chưa có đợt thi để lưu định mức.');return}let maKhoa=null;if(F.ld)maKhoa=await API.resolveKhoa(F.ld);const r=await API.setCommonQuota(dot,q,maKhoa);closeModal();await refreshLecturers(false);render();toast('Đã cập nhật '+r.GiangVienCapNhat+' giảng viên tham gia đợt. Tổng định mức: '+r.TongDinhMuc+'/'+r.TongNhuCau+' ca.')}catch(e){toast(e.message)}},
   busy(t){
     const l=lec(t.dataset.id),dates=[...new Set(S.exams.map(e=>e.date))].sort();
     if(!dates.length){openModal({title:'Lịch dạy và lịch bận',body:'<p>Chưa có lịch thi nên chưa có ngày để khai báo lịch bận. Hãy import lịch thi ở mục 3 trước.</p>',foot:'<button class="btn" data-act="close">Đóng</button>'});return}
@@ -672,4 +672,3 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Escape'&&$('#modal').innerHTML)closeModal();
   if(e.key==='Enter'&&!cur&&(e.target.id==='lu'||e.target.id==='lp'))A.login();
 });
-
