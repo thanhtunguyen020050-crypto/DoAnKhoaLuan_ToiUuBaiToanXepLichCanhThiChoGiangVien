@@ -1,6 +1,7 @@
 /* ========= Lõi xếp lịch ========= */
 function targets(){
-  const tot=S.exams.reduce((n,e)=>n+e.need,0),act=S.lecs.filter(l=>l.pct>0),pUnits=new Map(act.map(l=>[String(l.id),Math.round(Number(l.pct)*100)])),sp=act.reduce((n,l)=>n+pUnits.get(String(l.id)),0),t={};
+  const lecturers=S.lecs.filter(inDot);
+  const tot=S.exams.reduce((n,e)=>n+e.need,0),act=lecturers.filter(l=>l.pct>0),pUnits=new Map(act.map(l=>[String(l.id),Math.round(Number(l.pct)*100)])),sp=act.reduce((n,l)=>n+pUnits.get(String(l.id)),0),t={};
   S.lecs.forEach(l=>t[l.id]=0);
   if(!sp)return t;
   let used=0;const fr=[];
@@ -143,13 +144,14 @@ function hardConstraintFailures(report=analyze()){
 }
 function precheck(){
   const out=[];const add=(lv,t)=>out.push({lv:lv,t:t});
-  if(!S.lecs.length)add('bad','Chưa có giảng viên nào. Hãy thêm hoặc import ở mục 2.');else add('ok','Có '+S.lecs.length+' giảng viên trong danh sách.');
+  const lecturers=S.lecs.filter(inDot);
+  if(!lecturers.length)add('bad','Chưa có giảng viên nào được chọn tham gia đợt thi. Hãy chọn giảng viên ở mục 2.');else add('ok','Có '+lecturers.length+' giảng viên được chọn tham gia đợt thi.');
   if(!S.exams.length)add('bad','Chưa có ca thi nào. Hãy import lịch thi ở mục 3.');else add('ok','Có '+S.exams.length+' ca thi cần xếp.');
-  if(S.lecs.length&&S.exams.length){
-    const need=S.exams.reduce((n,e)=>n+e.need,0),T=tg(),act=S.lecs.filter(l=>l.pct>0);
+  if(lecturers.length&&S.exams.length){
+    const need=S.exams.reduce((n,e)=>n+e.need,0),T=tg(),act=lecturers.filter(l=>l.pct>0);
     if(!act.length)add('bad','Chưa có giảng viên nào có định mức lớn hơn 0%.');
     else add('ok','Chia '+need+' lượt gác cho '+act.length+' giảng viên theo phần trăm định mức; mỗi người được lệch tối đa 1 ca.');
-    const zero=S.lecs.filter(l=>l.pct===0);
+    const zero=lecturers.filter(l=>l.pct===0);
     if(zero.length)add('warn',zero.length+' giảng viên có định mức 0% nên sẽ không được xếp: '+zero.slice(0,4).map(l=>l.name).join(', ')+(zero.length>4?'...':'')+'.');
     const slots=new Set(S.exams.map(e=>e.date+'|'+e.ses)).size,over=act.filter(l=>T[l.id]>slots);
     if(over.length)add('bad',over.length+' giảng viên được chia nhiều ca hơn số khung giờ thi ('+slots+'), không thể xếp mà không trùng giờ.');
@@ -163,4 +165,3 @@ function precheck(){
   }
   return out;
 }
-
