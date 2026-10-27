@@ -11,7 +11,7 @@ async function refreshLecturers(showToast=true){
     const old=new Map(S.lecs.map(l=>[String(l.id),l]));
     S.lecs=items.map(x=>{
       const o=old.get(String(x.MaGV))||{};
-      return {id:x.MaGV,name:x.HoTen,dept:x.TenKhoa||x.TenBoMon||'Khoa CNTT',ma_bo_mon:x.MaBoMon,pct:Number(x.TyLeDinhMuc??o.pct??0),quota:Number(x.SoCaQuyDinh??o.quota??0),quota_authoritative:x.SoCaQuyDinh!=null,busy:o.busy||[],teach:o.teach||[]};
+      return {id:x.MaGV,name:x.HoTen,dept:x.TenKhoa||x.TenBoMon||'Khoa CNTT',ma_bo_mon:x.MaBoMon,pct:Number(x.TyLeDinhMuc??o.pct??0),quota:Number(x.SoCaQuyDinh??o.quota??0),quota_authoritative:x.SoCaQuyDinh!=null,inDot:window.__MA_DOT?x.MaDot!=null:true,busy:o.busy||[],teach:o.teach||[]};
     });
     for(const l of S.lecs){
       try{

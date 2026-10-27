@@ -5,6 +5,8 @@ const C={
   'busy-filter'(t){busyReqFilter=t.value;A['load-busy-requests']();},
   perm(t){S.perms[ROLES[+t.dataset.r]][+t.dataset.i]=t.checked?1:0;render()},
   async pct(t){const l=lec(t.dataset.id),v=parseInt(t.value,10);if(!l)return;const q=isNaN(v)||v<0?0:Math.min(v,100);l.pct=q;S.lecs.forEach(x=>x.quota_authoritative=false);try{if(window.__MA_DOT)await API.updateLecturer(l.id,{ho_ten:l.name,don_vi:l.dept,ty_le:q,ma_dot:window.__MA_DOT});render();toast('Đã cập nhật định mức trên SQL Server.')}catch(e){toast(e.message);render()}},
+  'dot-lec-one'(t){t.checked?dotPick.sel.add(t.value):dotPick.sel.delete(t.value);$('#dotLecCount').textContent=dotLecCount()},
+  'dot-lec-all'(t){dotLecFiltered().forEach(l=>t.checked?dotPick.sel.add(String(l.id)):dotPick.sel.delete(String(l.id)));$('#dotLecList').innerHTML=dotLecRows();$('#dotLecCount').textContent=dotLecCount()},
   ld(t){F.ld=t.value;render()},ed(t){F.ed=t.value;render()},sd(t){F.sd=t.value;render()},lack(t){F.lack=t.checked;render()},
   s2n(t){S.soft.S2.n=+t.value;save()},
   'soft-on'(t){S.soft[t.dataset.id].on=t.checked;render()},
@@ -144,6 +146,7 @@ const C={
 };
 document.addEventListener('change',e=>{const t=e.target,f=t.dataset&&t.dataset.chg;if(f&&C[f])C[f](t,e)});
 const I={
+  'dot-lec-q'(t){dotPick.q=t.value;$('#dotLecList').innerHTML=dotLecRows()},
   'busy-search'(t){busyReqSearch=t.value;clearTimeout(I._busyTimer);I._busyTimer=setTimeout(()=>{A['load-busy-requests']()},300)},
   lq(t){F.lq=t.value;$('#lecRows').innerHTML=lecRows()},
   eq(t){F.eq=t.value;$('#examRows').innerHTML=examRows()},

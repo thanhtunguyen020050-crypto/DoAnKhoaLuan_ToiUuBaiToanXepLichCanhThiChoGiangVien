@@ -41,3 +41,15 @@ def update_lecturer(ma_gv: str, x: GiangVienIn):
 @router.delete('/api/giang-vien/{ma_gv}')
 def delete_lecturer(ma_gv: str):
     return _model_delete_lecturer(ma_gv=ma_gv)
+
+
+try:
+    from ..schemas.admin import GVThamGiaDotIn
+    from ..models.admin_system import set_dot_lecturers as _model_set_dot_lecturers
+except ImportError:
+    from schemas.admin import GVThamGiaDotIn
+    from models.admin_system import set_dot_lecturers as _model_set_dot_lecturers
+
+@router.put('/api/dot-thi/{ma_dot}/giang-vien-tham-gia')
+def set_dot_lecturers(ma_dot: str, x: GVThamGiaDotIn):
+    return _model_set_dot_lecturers(ma_dot=ma_dot, x=x)

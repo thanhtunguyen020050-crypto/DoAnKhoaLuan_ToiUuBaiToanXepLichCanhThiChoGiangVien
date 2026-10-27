@@ -11,12 +11,12 @@ function targets(){
   for(let i=0;used<tot;i=(i+1)%fr.length,used++)t[fr[i].l.id]++;
   return t;
 }
-const tg=()=>S.lecs.length&&S.lecs.every(l=>l.quota_authoritative)?Object.fromEntries(S.lecs.map(l=>[String(l.id),Number(l.quota)||0])):targets();
+const tg=()=>{const M=S.lecs.filter(inDot);return M.length&&M.every(l=>l.quota_authoritative)?Object.fromEntries(S.lecs.map(l=>[String(l.id),inDot(l)?(Number(l.quota)||0):0])):targets()};
 async function persistAssignments(){
   const maDot=S.exams.find(e=>e.ma_dot)?.ma_dot||window.__MA_DOT;
   if(!maDot)throw new Error('Không xác định được đợt thi để lưu phân công.');
   const assignments=S.exams.flatMap(e=>e.asg.map(a=>({ma_ca:e.ma_ca,ma_gv:String(a.l)})));
-  const dinhMuc=S.lecs.map(l=>({ma_gv:String(l.id),ty_le:Number(l.pct)||0}));
+  const dinhMuc=S.lecs.filter(inDot).map(l=>({ma_gv:String(l.id),ty_le:Number(l.pct)||0}));
   return API.saveAssignments(maDot,assignments,dinhMuc);
 }
 function syncQuota(){if(!S.exams.length)return;const T=targets();S.lecs.forEach(l=>{if(!l.quota_authoritative)l.quota=T[l.id]??0})}
@@ -57,7 +57,7 @@ async function autoRun(){
     if(a.lock&&hardIssues(e,a.l).length)invalidLocks.add(String(e.id)+'|'+String(a.l));
   }));
   const payload={
-    lecturers:S.lecs,
+    lecturers:S.lecs.filter(inDot),
     exams:S.exams.map(e=>({...e,asg:e.asg.map(a=>({...a,lock:!!a.lock&&!invalidLocks.has(String(e.id)+'|'+String(a.l))}))})),
     soft:S.soft,
     ma_dot:window.__MA_DOT,

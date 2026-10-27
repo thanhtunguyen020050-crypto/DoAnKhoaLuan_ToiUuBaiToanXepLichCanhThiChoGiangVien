@@ -4,11 +4,11 @@ from fastapi import APIRouter, HTTPException
 
 try:
     from ..ketnoi_sql import get_connection
-    from ..schemas.admin import GiangVienIn
+    from ..schemas.admin import GiangVienIn, GVThamGiaDotIn
     from .admin_helpers import dict_rows, bomon_for_khoa
 except ImportError:
     from ketnoi_sql import get_connection
-    from schemas.admin import GiangVienIn
+    from schemas.admin import GiangVienIn, GVThamGiaDotIn
     from models.admin_helpers import dict_rows, bomon_for_khoa
 
 def health():
@@ -83,8 +83,6 @@ def update_lecturer(ma_gv: str, x: GiangVienIn):
                 cur.execute('SELECT 1 FROM dbo.DinhMucPhanCong WHERE MaDot=? AND MaGV=?', x.ma_dot, ma_gv)
                 if cur.fetchone():
                     cur.execute('EXEC dbo.sp_CapNhatTyLeDinhMuc ?,?,?', x.ma_dot, ma_gv, x.ty_le)
-                else:
-                    cur.execute('EXEC dbo.sp_ThemDinhMuc ?,?,?,NULL', x.ma_dot, ma_gv, x.ty_le)
             cn.commit()
             return {'ok': True}
     except HTTPException:
@@ -99,5 +97,58 @@ def delete_lecturer(ma_gv: str):
             cur.execute('EXEC dbo.sp_XoaGiangVien ?', ma_gv)
             cn.commit()
             return {'ok': True}
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+
+def set_dot_lecturers(ma_dot: str, x: GVThamGiaDotIn):
+    """Lưu danh sách giảng viên được tick tham gia đợt thi."""
+    chon = list(dict.fromkeys(m.strip() for m in x.ma_gv if m and m.strip()))
+    if not chon:
+        raise HTTPException(400, 'Phải chọn ít nhất 1 giảng viên tham gia đợt thi.')
+    try:
+        with get_connection() as cn:
+            cur = cn.cursor()
+            cur.execute('SELECT 1 FROM dbo.DotThi WHERE MaDot=?', ma_dot)
+            if not cur.fetchone():
+                raise HTTPException(404, 'Đợt thi không tồn tại.')
+
+            cur.execute("SELECT MaGV FROM dbo.GiangVien WHERE TrangThai=N'Đang công tác'")
+            hop_le = {r[0] for r in cur.fetchall()}
+            if any(m not in hop_le for m in chon):
+                raise HTTPException(400, 'Có giảng viên không tồn tại hoặc không còn công tác.')
+
+            cur.execute('SELECT MaGV FROM dbo.DinhMucPhanCong WHERE MaDot=?', ma_dot)
+            dang_co = {r[0] for r in cur.fetchall()}
+            chon_set = set(chon)
+            them = [m for m in chon if m not in dang_co]
+            bo = [m for m in dang_co if m not in chon_set]
+
+            # Không cho bỏ tick giảng viên đã có phân công (giống sp_XoaDinhMuc)
+            if bo:
+                cur.execute(
+                    'SELECT DISTINCT g.HoTen FROM dbo.PhanCongCoiThi p '
+                    'JOIN dbo.CaThi c ON c.MaCa=p.MaCa '
+                    'JOIN dbo.GiangVien g ON g.MaGV=p.MaGV '
+                    'WHERE c.MaDot=? AND p.MaGV IN (' + ','.join('?' * len(bo)) + ')',
+                    ma_dot, *bo)
+                dang_gac = [r[0] for r in cur.fetchall()]
+                if dang_gac:
+                    raise HTTPException(400, 'Không thể bỏ chọn giảng viên đã có phân công: '
+                                        + ', '.join(dang_gac) + '. Hãy xếp lại lịch trước.')
+
+            for m in them:
+                cur.execute("INSERT INTO dbo.DinhMucPhanCong(MaDot,MaGV,TyLeDinhMuc,GhiChu) "
+                            "VALUES(?,?,?,N'Chọn tham gia đợt thi')", ma_dot, m, x.ty_le_mac_dinh)
+            for m in bo:
+                cur.execute('DELETE FROM dbo.DinhMucPhanCong WHERE MaDot=? AND MaGV=?', ma_dot, m)
+
+            cur.execute('EXEC dbo.sp_TinhDinhMucTheoTyLe ?', ma_dot)
+            while cur.nextset():
+                pass
+            cn.commit()
+            return {'ok': True, 'tong': len(chon), 'them': len(them), 'bo': len(bo)}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(400, str(e))

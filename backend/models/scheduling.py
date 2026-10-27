@@ -30,7 +30,6 @@ def run_cpsat(request: ScheduleRequest):
                     if cur.fetchone():
                         raise HTTPException(status_code=400, detail='Danh sách giảng viên gửi lên có người không tồn tại hoặc không còn công tác.')
                     cur.execute('\n                        UPDATE d SET TyLeDinhMuc=r.TyLeDinhMuc\n                        FROM dbo.DinhMucPhanCong d\n                        JOIN #LichXepDinhMuc r ON r.MaGV=d.MaGV\n                        WHERE d.MaDot=?\n                        ', ma_dot)
-                    cur.execute("\n                        INSERT INTO dbo.DinhMucPhanCong(MaDot,MaGV,TyLeDinhMuc,GhiChu)\n                        SELECT ?,r.MaGV,r.TyLeDinhMuc,N'Đồng bộ khi xếp lịch'\n                        FROM #LichXepDinhMuc r\n                        WHERE NOT EXISTS (\n                            SELECT 1 FROM dbo.DinhMucPhanCong d\n                            WHERE d.MaDot=? AND d.MaGV=r.MaGV\n                        )\n                        ", ma_dot, ma_dot)
                 cur.execute('EXEC dbo.sp_TinhDinhMucTheoTyLe ?', ma_dot)
                 while cur.nextset():
                     pass

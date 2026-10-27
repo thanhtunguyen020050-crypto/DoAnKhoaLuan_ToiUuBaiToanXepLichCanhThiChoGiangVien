@@ -89,7 +89,6 @@ def save_exam_assignments(ma_dot: str, x: LuuPhanCongIn):
                 if cur.fetchone():
                     raise HTTPException(400, 'Danh sách định mức có giảng viên không tồn tại hoặc không còn công tác.')
                 cur.execute('\n                    UPDATE d SET TyLeDinhMuc=r.TyLeDinhMuc\n                    FROM dbo.DinhMucPhanCong d\n                    JOIN #LuuDinhMuc r ON r.MaGV=d.MaGV\n                    WHERE d.MaDot=?\n                ', ma_dot)
-                cur.execute("\n                    INSERT INTO dbo.DinhMucPhanCong(MaDot,MaGV,TyLeDinhMuc,GhiChu)\n                    SELECT ?,r.MaGV,r.TyLeDinhMuc,N'Đồng bộ khi lưu phân công'\n                    FROM #LuuDinhMuc r\n                    WHERE NOT EXISTS (\n                        SELECT 1 FROM dbo.DinhMucPhanCong d\n                        WHERE d.MaDot=? AND d.MaGV=r.MaGV\n                    )\n                ", ma_dot, ma_dot)
             cur.execute('EXEC dbo.sp_TinhDinhMucTheoTyLe ?', ma_dot)
             _drain(cur)
             cur.execute('CREATE TABLE #LuuPhanCong (MaCa VARCHAR(50) COLLATE DATABASE_DEFAULT NOT NULL, MaGV VARCHAR(20) COLLATE DATABASE_DEFAULT NOT NULL, PRIMARY KEY(MaCa,MaGV))')

@@ -67,6 +67,7 @@ window.API = (() => {
     async createLecturer(x){return req('/giang-vien',{method:'POST',body:JSON.stringify(x)})},
     async updateLecturer(id,x){return req('/giang-vien/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(x)})},
     async setCommonQuota(dot,tyLe,maKhoa=null){return req('/dinh-muc/dat-chung',{method:'POST',body:JSON.stringify({ma_dot:dot,ty_le:tyLe,ma_khoa:maKhoa})})},
+    async setDotLecturers(maDot,maGv){return req('/dot-thi/'+encodeURIComponent(maDot)+'/giang-vien-tham-gia',{method:'PUT',body:JSON.stringify({ma_gv:maGv})})},
     async boMon(khoa='CNTT'){return req('/bo-mon?ma_khoa='+encodeURIComponent(khoa))},
     async resolveKhoa(ten){const r=await req('/khoa/resolve?ten='+encodeURIComponent(ten));return r.MaKhoa},
     async deleteLecturer(id){return req('/giang-vien/'+encodeURIComponent(id),{method:'DELETE'})},

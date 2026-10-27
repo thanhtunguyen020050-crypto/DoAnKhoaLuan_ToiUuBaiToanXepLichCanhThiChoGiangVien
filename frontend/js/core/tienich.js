@@ -5,6 +5,7 @@ const half=s=>s<=2?'S':'C';
 const fmtD=d=>{const p=d.split('-');return p[2]+'/'+p[1]+'/'+p[0]};
 const wd=d=>{const p=d.split('-').map(Number);return WD[new Date(p[0],p[1]-1,p[2]).getDay()]};
 const lec=id=>S.lecs.find(l=>String(l.id)===String(id));
+const inDot=l=>l.inDot!==false;
 const exm=id=>S.exams.find(e=>e.id===id);
 const cmpEx=(a,b)=>a.date.localeCompare(b.date)||rangeFor(a)[0]-rangeFor(b)[0]||rangeFor(a)[1]-rangeFor(b)[1]||String(a.room).localeCompare(String(b.room));
 const depts=()=>[...new Set(S.lecs.map(l=>l.dept).concat(S.exams.map(e=>e.dept)).filter(Boolean))].sort();

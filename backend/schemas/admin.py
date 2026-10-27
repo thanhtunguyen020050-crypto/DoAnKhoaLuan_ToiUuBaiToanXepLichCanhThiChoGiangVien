@@ -63,6 +63,11 @@ class LuuPhanCongIn(BaseModel):
     dinh_muc: list[DinhMucItemIn] = Field(default_factory=list)
 
 
+class GVThamGiaDotIn(BaseModel):
+    ma_gv: list[str] = Field(default_factory=list)
+    ty_le_mac_dinh: float = Field(default=100, ge=0, le=100)
+
+
 class DinhMucChungIn(BaseModel):
     ma_dot: str = Field(min_length=1, max_length=20)
     ty_le: float = Field(ge=0, le=100)

@@ -387,6 +387,19 @@ const A={
   'del-user'(t){const u=S.users.find(x=>x.id===+t.dataset.id);if(!u||u.id===1)return;if(cur&&cur.id===u.id){toast('Không thể xóa tài khoản đang đăng nhập.');return}S.users=S.users.filter(x=>x!==u);render()},
   async 'refresh-lec'(){await refreshLecturers(true)},
   'add-lec'(){lecForm(null)},
+  'pick-dot-lec'(){
+    if(!window.__MA_DOT){toast('Chưa có đợt thi. Hãy tạo đợt thi trước.');return}
+    dotLecForm();
+  },
+  async 'save-dot-lec'(){
+    const er=$('#ferr'),ids=[...dotPick.sel];
+    if(!ids.length){er.textContent='Chọn ít nhất 1 giảng viên tham gia đợt thi.';return}
+    try{
+      const r=await API.setDotLecturers(window.__MA_DOT,ids);
+      closeModal();await refreshLecturers(false);render();
+      toast('Đã lưu '+r.tong+' giảng viên tham gia đợt thi (thêm '+r.them+', bỏ '+r.bo+').');
+    }catch(e){er.textContent=e.message}
+  },
   'edit-lec'(t){lecForm(lec(t.dataset.id))},
   async 'save-lec'(t){
     const n=$('#fn').value.trim(),d=$('#fd').value.trim(),bm=$('#fbm').value,q=parseInt($('#fq').value,10),er=$('#ferr');

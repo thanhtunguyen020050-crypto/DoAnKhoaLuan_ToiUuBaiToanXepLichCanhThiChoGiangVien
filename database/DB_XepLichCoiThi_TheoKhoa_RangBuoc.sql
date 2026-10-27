@@ -296,15 +296,7 @@ BEGIN
 
     BEGIN TRAN;
 
-    -- Tạo định mức cho GV chưa có dòng trong đợt; GV đã có thì cập nhật.
-    INSERT DinhMucPhanCong(MaDot,MaGV,TyLeDinhMuc,GhiChu)
-    SELECT @MaDot,g.MaGV,@TyLeDinhMuc,N'Đặt định mức chung'
-    FROM GiangVien g
-    JOIN BoMon bm ON bm.MaBoMon=g.MaBoMon
-    WHERE g.TrangThai=N'Đang công tác'
-      AND (@MaKhoa IS NULL OR bm.MaKhoa=@MaKhoa)
-      AND NOT EXISTS(SELECT 1 FROM DinhMucPhanCong d WHERE d.MaDot=@MaDot AND d.MaGV=g.MaGV);
-
+    -- Chỉ cập nhật GV đã được chọn tham gia đợt (có dòng trong DinhMucPhanCong); không tự thêm GV mới.
     UPDATE d SET TyLeDinhMuc=@TyLeDinhMuc, GhiChu=N'Đặt định mức chung'
     FROM DinhMucPhanCong d
     JOIN GiangVien g ON g.MaGV=d.MaGV

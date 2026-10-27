@@ -19,7 +19,7 @@ function lecForm(l){
 }
 function pickList(){
   const ex=exm(pick.ex),q=(pick.q||'').trim().toLowerCase();
-  const L=S.lecs.filter(l=>!ex.asg.some(a=>a.l===l.id)&&(!q||l.name.toLowerCase().indexOf(q)>=0)).map(l=>({l:l,iss:hardIssues(ex,l.id),ld:loadOf(l.id,null)})).sort((a,b)=>a.iss.length-b.iss.length||a.ld/Math.max(a.l.quota,1)-b.ld/Math.max(b.l.quota,1));
+  const L=S.lecs.filter(l=>inDot(l)&&!ex.asg.some(a=>a.l===l.id)&&(!q||l.name.toLowerCase().indexOf(q)>=0)).map(l=>({l:l,iss:hardIssues(ex,l.id),ld:loadOf(l.id,null)})).sort((a,b)=>a.iss.length-b.iss.length||a.ld/Math.max(a.l.quota,1)-b.ld/Math.max(b.l.quota,1));
   return L.length?L.map(x=>'<div class="pi"><div class="t"><b>'+esc(x.l.name)+'</b><span>'+esc(x.l.dept)+', đã gác '+x.ld+'/'+x.l.quota+' ca</span></div>'+x.iss.map(i=>'<span class="chip bad">'+i+'</span>').join('')+'<button class="btn sm '+(x.iss.length?'':'pri')+'" data-act="pick-ok" data-l="'+x.l.id+'">'+(x.iss.length?'Vẫn chọn':'Chọn')+'</button></div>').join(''):'<p class="muted" style="padding:14px 0">Không có giảng viên phù hợp.</p>';
 }
 function doPre(){
@@ -39,3 +39,26 @@ function copyText(t){
   });
 }
 
+/* ===== Chọn giảng viên tham gia đợt gác thi ===== */
+let dotPick=null;
+function dotLecFiltered(){
+  const q=dotPick.q.trim().toLowerCase();
+  return S.lecs.filter(l=>!q||l.name.toLowerCase().indexOf(q)>=0);
+}
+function dotLecCount(){return dotPick.sel.size+' / '+S.lecs.length+' giảng viên được chọn'}
+function dotLecRows(){
+  const L=dotLecFiltered();
+  if(!L.length)return '<p class="muted" style="padding:14px 0">Không có giảng viên phù hợp.</p>';
+  return '<div class="bz" style="grid-template-columns:36px 1.6fr 1fr">'+L.map(l=>
+    '<span class="c"><input type="checkbox" value="'+esc(l.id)+'"'+(dotPick.sel.has(String(l.id))?' checked':'')+' data-chg="dot-lec-one" aria-label="Chọn '+esc(l.name)+'"></span>'+
+    '<span>'+esc(l.name)+'</span><span class="muted">'+esc(l.dept)+'</span>').join('')+'</div>';
+}
+function dotLecForm(){
+  dotPick={q:'',sel:new Set(S.lecs.filter(inDot).map(l=>String(l.id)))};
+  openModal({title:'Chọn giảng viên tham gia đợt gác thi',wide:true,
+    body:'<p class="hint">Chỉ giảng viên được tick mới được tính định mức và xếp gác trong đợt <b>'+esc(window.__MA_DOT)+'</b>.</p>'+
+      '<div class="tools"><div class="grow"><input type="text" data-inp="dot-lec-q" placeholder="Tìm theo tên giảng viên"></div>'+
+      '<label class="muted"><input type="checkbox" data-chg="dot-lec-all"> Chọn tất cả đang hiển thị</label></div>'+
+      '<div id="dotLecList">'+dotLecRows()+'</div><p class="muted" id="dotLecCount">'+dotLecCount()+'</p><div class="err" id="ferr"></div>',
+    foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="save-dot-lec">Lưu danh sách</button>'});
+}
