@@ -6,6 +6,7 @@ Vào **Quản lý giảng viên → Chọn GV tham gia đợt**, tick những gi
 - Danh sách tham gia đợt = các dòng của `DinhMucPhanCong` theo `MaDot` (không thêm bảng mới).
 - Tick thêm: tạo dòng định mức mặc định 100%. Bỏ tick: xóa dòng; bị chặn nếu GV đã có phân công trong đợt.
 - GV chưa tick: hiện chip "Không tham gia đợt", khóa ô định mức, không đưa vào solver CP-SAT, không hiện ở danh sách chọn tay.
+- Backend đối chiếu danh sách solver và phân công lưu với `DinhMucPhanCong`; request có giảng viên chưa tham gia đợt sẽ bị từ chối.
 - Đợt cũ đã có định mức thì các GV đó tự hiện là đã tick.
 
 ## File đã sửa

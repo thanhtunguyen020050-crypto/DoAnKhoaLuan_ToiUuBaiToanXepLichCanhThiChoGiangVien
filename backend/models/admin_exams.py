@@ -100,6 +100,17 @@ def save_exam_assignments(ma_dot: str, x: LuuPhanCongIn):
             cur.execute("SELECT TOP 1 r.MaGV FROM #LuuPhanCong r LEFT JOIN dbo.GiangVien g ON g.MaGV=r.MaGV AND g.TrangThai=N'Đang công tác' WHERE g.MaGV IS NULL")
             if cur.fetchone():
                 raise HTTPException(400, 'Danh sách có giảng viên không tồn tại hoặc không còn công tác.')
+            cur.execute(
+                """
+                SELECT TOP 1 r.MaGV
+                FROM #LuuPhanCong r
+                LEFT JOIN dbo.DinhMucPhanCong d ON d.MaDot=? AND d.MaGV=r.MaGV
+                WHERE d.MaGV IS NULL
+                """,
+                ma_dot,
+            )
+            if cur.fetchone():
+                raise HTTPException(400, 'Danh sách có giảng viên chưa được chọn tham gia đợt thi.')
             cur.execute('DELETE p FROM dbo.PhanCongCoiThi p INNER JOIN dbo.CaThi c ON c.MaCa=p.MaCa WHERE c.MaDot=?', ma_dot)
             cur.execute('INSERT INTO dbo.PhanCongCoiThi(MaCa,MaGV) SELECT MaCa,MaGV FROM #LuuPhanCong')
             cur.execute('EXEC dbo.sp_KiemTraRangBuoc ?,1', ma_dot)

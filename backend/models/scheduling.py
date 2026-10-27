@@ -22,6 +22,33 @@ def run_cpsat(request: ScheduleRequest):
             ma_dot = next(iter(dot_ids))
             with get_connection() as cn:
                 cur = cn.cursor()
+
+                cur.execute(
+                    """
+                    SELECT d.MaGV
+                    FROM dbo.DinhMucPhanCong d
+                    JOIN dbo.GiangVien g ON g.MaGV=d.MaGV
+                    WHERE d.MaDot=? AND g.TrangThai=N'Đang công tác'
+                    """,
+                    ma_dot,
+                )
+                participating_ids = {str(row[0]).strip() for row in cur.fetchall()}
+                requested_ids = {
+                    str(lecturer.get("id", "")).strip()
+                    for lecturer in payload["lecturers"]
+                }
+                excluded_ids = requested_ids - participating_ids
+                if excluded_ids:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Danh sách xếp lịch có giảng viên chưa được chọn tham gia đợt thi.",
+                    )
+
+                payload["lecturers"] = [
+                    lecturer
+                    for lecturer in payload["lecturers"]
+                    if str(lecturer.get("id", "")).strip() in participating_ids
+                ]
                 weights = [(str(lecturer.get('id', '')).strip(), float(lecturer.get('pct', 0) or 0)) for lecturer in payload['lecturers']]
                 if weights:
                     cur.execute('CREATE TABLE #LichXepDinhMuc (MaGV VARCHAR(20) COLLATE DATABASE_DEFAULT NOT NULL PRIMARY KEY, TyLeDinhMuc DECIMAL(5,2) NOT NULL)')
