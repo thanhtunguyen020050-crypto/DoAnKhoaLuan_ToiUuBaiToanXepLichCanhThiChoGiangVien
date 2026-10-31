@@ -41,7 +41,7 @@ def update_lecturer(ma_gv: str, x: GiangVienIn):
     return _model_update_lecturer(ma_gv=ma_gv, x=x)
 
 @router.delete('/api/giang-vien/{ma_gv}')
-def delete_lecturer(ma_gv: str):
+def delete_lecturer(ma_gv: str, admin_user: str = Depends(require_admin)):
     return _model_delete_lecturer(ma_gv=ma_gv)
 
 @router.post('/api/giang-vien/{ma_gv}/reactivate')

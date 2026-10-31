@@ -1,4 +1,6 @@
-export const API_BASE = import.meta.env.VITE_API_BASE_URL || window.API_BASE_URL || 'http://127.0.0.1:8000/api';
+// Use same-origin API by default so production/demo browsers never try to call
+// their own localhost. Vite proxies /api during local development.
+export const API_BASE = import.meta.env.VITE_API_BASE_URL || window.API_BASE_URL || '/api';
 
 function friendlyError(message, status) {
   if (status >= 500 || /SQL Server|ODBC|SQLExecDirect|SQLDriverConnect|invalid object name|stored procedure|dbo\.|database|SQLSTATE|Microsoft/i.test(String(message || ''))) {
@@ -16,12 +18,16 @@ export async function apiPost(path, payload) {
       body: JSON.stringify(payload)
     });
   } catch (_) {
-    throw new Error('Không thể gửi yêu cầu đăng nhập. Vui lòng thử lại sau.');
+    const error = new Error('Không thể gửi yêu cầu đăng nhập. Vui lòng kiểm tra kết nối máy chủ.');
+    error.status = 0;
+    throw error;
   }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = data.detail;
-    throw new Error(friendlyError(typeof detail === 'string' ? detail : detail?.message || 'Yêu cầu thất bại.', response.status));
+    const error = new Error(friendlyError(typeof detail === 'string' ? detail : detail?.message || `Yêu cầu thất bại (HTTP ${response.status}).`, response.status));
+    error.status = response.status;
+    throw error;
   }
   return data;
 }

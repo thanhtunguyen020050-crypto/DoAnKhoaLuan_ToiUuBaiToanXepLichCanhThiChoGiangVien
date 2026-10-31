@@ -37,7 +37,7 @@ function busyInfo(l,e){
 }
 function busyHard(l,e){const b=busyInfo(l,e);return !!b&&Number(b.priority)===1}
 function busyPenalty(l,e){const b=busyInfo(l,e);if(!b)return 0;const p=Number(b.priority);if(p===1)return 10000000;if(!S.soft.S2.on)return 0;return p===2?6:p===3?2:2}
-function isTeach(l,e){const r=rangeFor(e);return(l.teach||[]).some(t=>{const p=String(t).split('|'),d=p[0],v=p[1]||'';if(d!==e.date)return false;const m=v.match(/^(\d+)\s*[→>-]\s*(\d+)$/);if(m)return r[0]<=+m[2]&&+m[1]<=r[1];const c=+v,cr=({1:[1,2],2:[3,4],3:[7,8],4:[9,10]})[c];return!!cr&&r[0]<=cr[1]&&cr[0]<=r[1]})}
+function isTeach(l,e){const r=rangeFor(e);return(l.teach||[]).some(raw=>{const t=teachingEntry(raw);if(t.date!==e.date)return false;return r[0]<=t.end&&t.start<=r[1]})}
 function hardIssues(ex,lid){
   const l=lec(lid),out=[];if(!l)return out;
   if(dupSlot(ex,lid))out.push('Trùng ca');
@@ -79,6 +79,7 @@ async function autoRun(){
     if(result.quotas){
       S.lecs.forEach(l=>{l.quota=Number(result.quotas[String(l.id)]||0);l.quota_authoritative=true});
     }
+    S.schedulePublished=false;S.scheduleDraftDirty=true;
     snapshot('Google OR-Tools CP-SAT');
     pre=null;save();render();
     const report=analyze();
@@ -87,12 +88,9 @@ async function autoRun(){
       toast('Chưa xếp lịch thành công: còn vi phạm ràng buộc cứng — '+hardFailures.map(x=>x.name+' '+x.pct+'%').join(', ')+'.');
       return;
     }
-    try{
-      await persistAssignments();
-      toast('Xếp lịch thành công.');
-    }catch(e){
-      toast('Đã xếp lịch nhưng chưa lưu được dữ liệu: '+(e.message||e));
-    }
+    // Xếp tự động chỉ cập nhật bản nháp trong phiên admin.
+    // Chỉ nút “Lưu và Công bố lịch” mới ghi phân công lên máy chủ.
+    toast('Xếp lịch thành công. Đây là bản nháp; nhấn “Lưu và Công bố lịch” để giảng viên xem.');
   }catch(e){
     toast('Không gọi được thuật toán CP-SAT: '+(e.message||e));
   }

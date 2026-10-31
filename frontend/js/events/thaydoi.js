@@ -3,11 +3,13 @@ const C={
   role(t){const u=S.users.find(x=>x.id===+t.dataset.id);u.role=t.value;if(cur&&cur.id===u.id)cur=u;render()},
   active(t){S.users.find(x=>x.id===+t.dataset.id).on=t.checked;save()},
   'busy-filter'(t){busyReqFilter=t.value;A['load-busy-requests']();},
+  'account-password-filter'(t){accountsPasswordFilter=t.value;refreshAccountRows()},
+  'account-work-filter'(t){accountsWorkFilter=t.value;refreshAccountRows()},
   perm(t){S.perms[ROLES[+t.dataset.r]][+t.dataset.i]=t.checked?1:0;render()},
   async pct(t){const l=lec(t.dataset.id),v=parseInt(t.value,10);if(!l)return;const q=isNaN(v)||v<0?0:Math.min(v,100);l.pct=q;S.lecs.forEach(x=>x.quota_authoritative=false);try{if(window.__MA_DOT)await API.updateLecturer(l.id,{ho_ten:l.name,don_vi:l.dept,ty_le:q,ma_dot:window.__MA_DOT});render();toast('Đã cập nhật định mức.')}catch(e){toast(e.message);render()}},
-  'dot-lec-one'(t){t.checked?dotPick.sel.add(t.value):dotPick.sel.delete(t.value);$('#dotLecCount').textContent=dotLecCount()},
-  'dot-lec-all'(t){dotLecFiltered().forEach(l=>t.checked?dotPick.sel.add(String(l.id)):dotPick.sel.delete(String(l.id)));$('#dotLecList').innerHTML=dotLecRows();$('#dotLecCount').textContent=dotLecCount()},
-  ld(t){F.ld=t.value;render()},ed(t){F.ed=t.value;render()},sd(t){F.sd=t.value;render()},lack(t){F.lack=t.checked;render()},
+  'dot-lec-one'(t){t.checked?dotPick.sel.add(t.value):dotPick.sel.delete(t.value);$('#dotLecCount').textContent=dotLecCount();updateDotLecSelectAll()},
+  'dot-lec-all'(t){dotLecFiltered().forEach(l=>t.checked?dotPick.sel.add(String(l.id)):dotPick.sel.delete(String(l.id)));$('#dotLecList').innerHTML=dotLecRows();$('#dotLecCount').textContent=dotLecCount();updateDotLecSelectAll()},
+  ld(t){F.ld=t.value;render()},ls(t){F.ls=t.value;render()},ed(t){F.ed=t.value;render()},ek(t){F.ek=t.value;render()},sd(t){F.sd=t.value;render()},lack(t){F.lack=t.checked;render()},
   s2n(t){S.soft.S2.n=+t.value;save()},
   'soft-on'(t){S.soft[t.dataset.id].on=t.checked;render()},
   'busy-file'(t){
@@ -146,10 +148,10 @@ const C={
 };
 document.addEventListener('change',e=>{const t=e.target,f=t.dataset&&t.dataset.chg;if(f&&C[f])C[f](t,e)});
 const I={
-  'dot-lec-q'(t){dotPick.q=t.value;$('#dotLecList').innerHTML=dotLecRows()},
+  'dot-lec-q'(t){dotPick.q=t.value;$('#dotLecList').innerHTML=dotLecRows();updateDotLecSelectAll()},
   'busy-search'(t){busyReqSearch=t.value;clearTimeout(I._busyTimer);I._busyTimer=setTimeout(()=>{A['load-busy-requests']()},300)},
-  'accounts-search'(t){accountsSearch=t.value;const tbody=$('#userAccountRows'),count=$('#accountSearchCount'),result=accountRows();if(tbody)tbody.innerHTML=result.rows;if(count)count.textContent=result.count+' / '+adminAccounts.length+' tài khoản'},
-  lq(t){F.lq=t.value;$('#lecRows').innerHTML=lecRows()},
+  'accounts-search'(t){accountsSearch=t.value;refreshAccountRows()},
+  lq(t){F.lq=t.value;$('#lecRows').innerHTML=lecRows();updateLecturerCount()},
   eq(t){F.eq=t.value;$('#examRows').innerHTML=examRows()},
   'pick-q'(t){pick.q=t.value;$('#pickList').innerHTML=pickList()},
   'soft-w'(t){S.soft[t.dataset.id].w=+t.value;t.nextElementSibling.textContent=t.value;save()}

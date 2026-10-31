@@ -29,7 +29,10 @@ export default function LoginPage() {
         sessionStorage.removeItem('mustChangePassword');
         window.location.replace('/index.html');
         return;
-      } catch (_) {
+      } catch (adminError) {
+        // Lecturer usernames also receive 401 from the admin endpoint. Only
+        // then try lecturer login; surface networking/API failures directly.
+        if (adminError.status !== 401) throw adminError;
         const lecturer = await apiPost('/user/login', { ma_gv: username.trim(), password });
         sessionStorage.setItem('authRole', 'user');
         sessionStorage.setItem('lecturerSession', JSON.stringify(lecturer));
@@ -49,27 +52,36 @@ export default function LoginPage() {
   return (
     <div className="login">
       <section className="login-art">
-        <div className="lb">
-          <div className="logo-wrap"><img src={getLogo()} alt="Logo Trường Đại học Công Thương" width="64" height="64" /></div>
-          <div className="uni">Trường Đại học Công Thương<br />Thành phố Hồ Chí Minh</div>
+        <div className="login-brand">
+          <div className="login-logo-wrap"><img src={getLogo()} alt="Logo Trường Đại học Công Thương" width="64" height="64" /></div>
+          <div className="login-university"><b>Trường Đại học Công Thương TP.HCM</b><span>Khoa Công nghệ Thông tin</span></div>
         </div>
-        <div>
-          <h2>Hệ thống xếp lịch gác thi</h2>
-          <p>Đăng nhập để quản lý lịch gác thi hoặc tra cứu lịch cá nhân.</p>
+        <div className="login-intro">
+          <span className="login-kicker"><span aria-hidden="true">✦</span> Cổng thông tin điều phối khảo thí</span>
+          <h2>Hệ thống xếp lịch gác thi tự động</h2>
+          <p>Tối ưu phân công giảng viên coi thi, kiểm soát lịch trùng và tra cứu lịch cá nhân nhanh chóng, minh bạch.</p>
+          <div className="login-feature-card">
+            <div className="login-feature-heading"><span className="login-check" aria-hidden="true">✓</span><b>Công cụ hỗ trợ điều phối</b><span className="login-term">Khoa CNTT</span></div>
+            <div className="login-feature-grid">
+              <div><span>Phân công</span><b>Theo định mức</b></div>
+              <div><span>Ràng buộc</span><b>Kiểm tra lịch</b></div>
+              <div><span>Báo cáo</span><b>Xuất dữ liệu</b></div>
+            </div>
+          </div>
         </div>
-        <div className="mini" aria-hidden="true">{Array.from({ length: 40 }, (_, index) => <i key={index} className={index % 4 === 0 ? 'a' : ''} />)}</div>
+        <div className="login-art-footer"><span>© {new Date().getFullYear()} Khoa CNTT – HUIT</span><span>Phiên bản ProMax</span></div>
       </section>
       <section className="login-form">
-        <div>
-          <h1>Đăng nhập</h1>
-          <p className="muted" style={{ marginBottom: 18 }}>Nhập tài khoản được cấp. Hệ thống tự chuyển đến giao diện phù hợp.</p>
+        <div className="login-card">
+          <h1>Đăng nhập hệ thống</h1>
+          <p className="login-description">Sử dụng tài khoản được cấp. Hệ thống sẽ tự nhận diện quyền <b>Quản trị viên</b> hoặc <b>Giảng viên</b>.</p>
           <form onSubmit={handleSubmit}>
-            <label className="f"><span>Tài khoản / Mã giảng viên</span><input type="text" value={username} onChange={event => setUsername(event.target.value)} required maxLength={120} autoComplete="username" /></label>
-            <label className="f"><span>Mật khẩu</span><input value={password} onChange={event => setPassword(event.target.value)} type="password" required autoComplete="current-password" /></label>
+            <label className="f login-field"><span>Tài khoản / Mã giảng viên</span><div className="login-control"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><input type="text" value={username} onChange={event => setUsername(event.target.value)} required maxLength={120} autoComplete="username" /></div></label>
+            <label className="f login-field"><span>Mật khẩu</span><div className="login-control"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg><input value={password} onChange={event => setPassword(event.target.value)} type="password" required autoComplete="current-password" /></div></label>
             <div className="err" role="alert">{error}</div>
-            <button className="btn pri" type="submit" disabled={submitting}>{submitting ? 'Đang đăng nhập…' : 'Đăng nhập'}</button>
+            <button className="btn pri login-submit" type="submit" disabled={submitting}>{submitting ? 'Đang đăng nhập…' : <>Đăng nhập <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></>}</button>
           </form>
-          <p className="hint">Giảng viên đăng nhập lần đầu bằng mật khẩu tạm 1 sẽ được yêu cầu đổi mật khẩu.</p>
+          <div className="login-notice"><span aria-hidden="true">i</span><p><b>Lưu ý cho Giảng viên:</b> Khi đăng nhập lần đầu bằng mật khẩu tạm do Khoa cấp, hệ thống sẽ yêu cầu thiết lập mật khẩu mới.</p></div>
         </div>
       </section>
     </div>

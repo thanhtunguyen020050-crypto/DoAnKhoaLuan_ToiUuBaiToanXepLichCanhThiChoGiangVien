@@ -25,6 +25,7 @@ const IC={
   lock:svg('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',14),
   unlock:svg('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-1.5"/>',14),
   x:svg('<path d="M6 6l12 12M18 6L6 18"/>',14),
+  trash:svg('<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/>',15),
   plus:svg('<path d="M12 5v14M5 12h14"/>'),
   upload:svg('<path d="M12 16V4M7 9l5-5 5 5M5 20h14"/>'),
   search:svg('<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/>'),
@@ -43,12 +44,19 @@ const IC={
   arrow:svg('<path d="M5 12h14M13 6l6 6-6 6"/>',13),
   bell:svg('<path d="M6 9a6 6 0 1 1 12 0c0 6 2 7 2 7H4s2-1 2-7M10 20a2 2 0 0 0 4 0"/>',18),
   key:svg('<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M16 7l3 3"/>',18),
+  clock:svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',15),
   home:svg('<path d="M3 11 12 3l9 8M5 10v10h14V10"/>',18),
   inbox:svg('<path d="M3 13h5l1 3h6l1-3h5M5 5h14l2 8v6H3v-6z"/>',18),
   sliders:svg('<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>',18),
   chart:svg('<path d="M4 20V4M4 20h16M8 16v-5M13 16V8M18 16v-3"/>',18),
   gear:svg('<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>',18),
   send:svg('<path d="M21 3 10 14M21 3l-7 18-4-7-7-4z"/>',18),
-  down:svg('<path d="M12 5v14M6 13l6 6 6-6"/>',18)
+  down:svg('<path d="M12 5v14M6 13l6 6 6-6"/>',18),
+  percent:svg('<path d="M19 5 5 19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>',17),
+  calendarOff:svg('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18M4 4l16 16"/>',17),
+  eye:svg('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',19),
+  wand:svg('<path d="m15 4 5 5M4 20 17 7M7 4v4M5 6h4M18 14v4M16 16h4"/>',18),
+  history:svg('<path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/>',17),
+  sun:svg('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4m11.4-11.4 1.4-1.4"/>',15)
 };
 

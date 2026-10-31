@@ -1,4 +1,10 @@
 /* ========= Hành động (click) ========= */
+function renderTeachingEditor(){
+  const l=teachingEdit&&lec(teachingEdit.id);if(!l)return;
+  const items=teachingEdit.items||[];
+  const rows=items.length?items.map((x,i)=>'<div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--card)"><div style="flex:1;min-width:0"><b>'+esc(fmtD(x.date))+' · tiết '+x.start+'–'+x.end+'</b>'+(x.source?'<small style="display:block;color:var(--muted);margin-top:3px">Nguồn: '+esc(x.source)+'</small>':'')+(x.note?'<small style="display:block;color:var(--muted);margin-top:3px">'+esc(x.note)+'</small>':'')+'</div><button type="button" class="btn sm ghost danger icon-delete" data-act="remove-teaching-row" data-index="'+i+'" title="Xóa ca dạy này" aria-label="Xóa ca dạy này">'+IC.trash+'</button></div>').join(''):'<p class="muted" style="padding:12px 0">Chưa có ca dạy. Thêm ngày và khoảng tiết ở bên dưới.</p>';
+  openModal({title:(items.length?'Cập nhật':'Thêm')+' lịch dạy · '+l.name,wide:true,body:'<p class="muted" style="margin-bottom:12px">Khai báo ngày và khoảng tiết giảng viên đứng lớp. Các ca này được dùng để tránh phân công coi thi trùng giờ.</p><div style="display:grid;gap:8px;margin-bottom:12px">'+rows+'</div><div class="panel" style="margin:12px 0;padding:14px"><b>Thêm ca dạy</b><div style="display:grid;grid-template-columns:1.3fr 1fr 1fr auto;gap:10px;align-items:end;margin-top:10px"><label class="f" style="margin:0"><span>Ngày dạy</span><input type="date" id="teachDate" required></label><label class="f" style="margin:0"><span>Tiết bắt đầu</span><input type="number" id="teachStart" min="1" max="12" value="1" required></label><label class="f" style="margin:0"><span>Tiết kết thúc</span><input type="number" id="teachEnd" min="1" max="12" value="2" required></label><button type="button" class="btn" data-act="add-teaching-row">Thêm ca</button></div><p class="hint" style="margin:8px 0 0">Tiết hợp lệ từ 1 đến 12. Lịch dạy đã import sẽ được giữ lại khi lưu.</p><div class="err" id="teachErr" role="alert"></div></div>',foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="save-teaching-schedule" data-id="'+esc(l.id)+'">Lưu lịch dạy</button>'});
+}
 const A={
   login(){
     const u=$('#lu').value.trim().toLowerCase(),p=$('#lp').value,acc=S.users.find(x=>x.user===u),er=$('#lerr');
@@ -38,11 +44,39 @@ const A={
     }catch(e){er.textContent=e.message==='Failed to fetch'?'Không thể đổi mật khẩu lúc này. Vui lòng thử lại.':(e.message||'Không thể đổi mật khẩu lúc này.')}
   },
   logout(){cur=null;sessionStorage.removeItem('authRole');sessionStorage.removeItem('authUsername');sessionStorage.removeItem('authToken');sessionStorage.removeItem('lecturerSession');sessionStorage.removeItem('mustChangePassword');location.replace('login.html')},
-  go(t){view=t.dataset.v;render();window.scrollTo(0,0);if(view==='accounts')A['load-user-accounts']();if(view==='busy_reqs')A['load-busy-requests']();},
+  go(t){if(t.dataset.task==='pending-busy'){busyReqFilter='PENDING';busyReqSearch=''}view=t.dataset.v;render();window.scrollTo(0,0);if(view==='accounts')A['load-user-accounts']();if(view==='busy_reqs')A['load-busy-requests']();},
   async 'load-user-accounts'(){accountsLoading=true;accountsError='';render();try{const r=await API.userAccounts();adminAccounts=r.items||[]}catch(e){accountsError=e.message==='Not Found'?'Chức năng quản lý tài khoản chưa sẵn sàng. Vui lòng thử làm mới dữ liệu hoặc liên hệ quản trị viên.':(e.message||'Không tải được danh sách tài khoản.')}finally{accountsLoading=false;render()}},
   'reset-user-password'(t){
     const maGV=t.dataset.id, account=adminAccounts.find(a=>String(a.MaGV)===String(maGV));
     openModal({title:'Cấp mật khẩu tạm',body:'<p class="muted">Cấp mật khẩu mới cho <b>'+esc(account&&account.HoTen||maGV)+'</b> ('+esc(maGV)+'). Mật khẩu hiện tại sẽ mất hiệu lực.</p><label class="f"><span>Nhập lại mật khẩu Admin để xác nhận</span><input type="password" id="resetAdminPassword" autocomplete="current-password" required></label><div class="err" id="resetPasswordError" role="alert"></div>',foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="confirm-reset-user-password" data-id="'+esc(maGV)+'">Cấp mật khẩu tạm</button>'});
+  },
+  'export-accounts'(){
+    if(!adminAccounts.length){toast('Chưa có tài khoản để xuất.');return}
+    if(typeof XLSX==='undefined'){toast('Chưa tải được thư viện Excel. Kiểm tra kết nối mạng rồi thử lại.');return}
+    const data=accountRows().items.map(a=>{const lastLogin=a.LastLoginAt?new Date(a.LastLoginAt):null;return [a.HoTen||'',a.MaGV||'',a.Email||'',a.TrangThaiGiangVien||'',a.AccountStatusKnown===false?'Chưa có tài khoản':a.MustChangePassword?'Cần đổi mật khẩu':'Đã thiết lập',lastLogin&&!Number.isNaN(lastLogin.getTime())?lastLogin.toLocaleString('vi-VN'):'Chưa đăng nhập']});
+    const headers=['Giảng viên','Mã giảng viên','Email đăng nhập','Trạng thái công tác','Bảo mật mật khẩu','Đăng nhập cuối'];
+    const ws=XLSX.utils.aoa_to_sheet([headers,...data]);
+    ws['!cols']=[{wch:28},{wch:16},{wch:32},{wch:22},{wch:24},{wch:24}];
+    const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Tài khoản');
+    const now=new Date(),pad=n=>String(n).padStart(2,'0');
+    XLSX.writeFile(wb,'danh-sach-tai-khoan-'+now.getFullYear()+pad(now.getMonth()+1)+pad(now.getDate())+'.xlsx');
+    toast('Đã xuất '+data.length+' tài khoản.');
+  },
+  async 'toggle-account-employment'(t){
+    const maGV=t.dataset.id, account=adminAccounts.find(a=>String(a.MaGV)===String(maGV));
+    if(!account)return;
+    const stopped=account.TrangThaiGiangVien!=='Đang công tác';
+    const message=stopped
+      ? 'Khôi phục trạng thái công tác cho '+(account.HoTen||maGV)+'? Tài khoản đăng nhập sẽ được mở lại.'
+      : 'Chuyển '+(account.HoTen||maGV)+' sang trạng thái ngừng công tác? Giảng viên sẽ không đăng nhập được cho đến khi được khôi phục.';
+    if(!confirm(message))return;
+    t.disabled=true;
+    try{
+      if(stopped)await API.reactivateLecturer(maGV);
+      else await API.deleteLecturer(maGV);
+      await A['load-user-accounts']();
+      toast(stopped?'Đã khôi phục trạng thái công tác và mở lại tài khoản.':'Đã ngừng công tác và khóa tài khoản đăng nhập.');
+    }catch(e){t.disabled=false;toast(e.message||'Không thể cập nhật trạng thái công tác.')}
   },
   async 'reactivate-lecturer'(t){
     const maGV=t.dataset.id, account=adminAccounts.find(a=>String(a.MaGV)===String(maGV));
@@ -451,18 +485,36 @@ const A={
     openModal({title:'Đặt định mức chung',body:'<p class="muted" style="margin-bottom:10px">Chỉ cập nhật định mức cho '+scope+' ('+eligible.length+' người). Không thêm giảng viên ngoài danh sách tham gia.</p><label class="f"><span>Định mức (%)</span><input type="number" id="qa" min="0" max="100" value="100"></label>',foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="do-quota-all"'+(eligible.length?'':' disabled')+'>Áp dụng</button>'})
   },
   async 'do-quota-all'(){const q=parseInt($('#qa').value,10);if(isNaN(q)||q<0||q>100)return;try{const dot=window.__MA_DOT;if(!dot){toast('Chưa có đợt thi để lưu định mức.');return}let maKhoa=null;if(F.ld)maKhoa=await API.resolveKhoa(F.ld);const r=await API.setCommonQuota(dot,q,maKhoa);closeModal();await refreshLecturers(false);render();toast('Đã áp dụng '+q+'% cho '+(r.GiangVienCapNhat||0)+' giảng viên tham gia. Tổng định mức: '+r.TongDinhMuc+'/'+r.TongNhuCau+' ca.')}catch(e){toast(e.message)}},
-  busy(t){
-    const l=lec(t.dataset.id),dates=[...new Set(S.exams.map(e=>e.date))].sort();
-    if(!dates.length){openModal({title:'Lịch dạy và lịch bận',body:'<p>Chưa có lịch thi nên chưa có ngày để khai báo lịch bận. Hãy import lịch thi ở mục 3 trước.</p>',foot:'<button class="btn" data-act="close">Đóng</button>'});return}
-    const cb=(c,v,on,lb)=>'<span class="c"><input type="checkbox" class="'+c+'" value="'+v+'"'+(on?' checked':'')+' aria-label="'+lb+'"></span>';
-    const teach=(l.teach||[]).slice().sort();
-    openModal({title:'Lịch dạy và lịch bận của '+l.name,wide:true,body:'<p class="muted" style="margin-bottom:8px"><b>Lịch dạy</b>: lấy từ file import, là HARD CONSTRAINT 100% — tuyệt đối không xếp gác trùng. <b>Lịch bận</b>: phát sinh cá nhân, là SOFT CONSTRAINT — ưu tiên né.</p>'+(teach.length?'<div class="panel" style="margin:8px 0"><b>Lịch dạy đã import ('+teach.length+' ca)</b><p class="hint">'+teach.map(x=>{const p=x.split('|');return fmtD(p[0])+' · tiết '+p[1].replace('-', ' → ')}).join('; ')+'</p></div>':'<p class="hint">Chưa có lịch dạy được import cho giảng viên này.</p>')+'<div class="bz" style="grid-template-columns:1.6fr repeat(2,.9fr)"><span class="hd">Ngày</span><span class="hd c">Bận sáng</span><span class="hd c">Bận chiều</span>'+dates.map(d=>'<span>'+wd(d)+' '+fmtD(d)+'</span>'+cb('bk',d+'|S',(l.busy||[]).some(x=>(typeof x==='string'?x:x.key)===d+'|S'),'Bận sáng '+fmtD(d))+cb('bk',d+'|C',(l.busy||[]).some(x=>(typeof x==='string'?x:x.key)===d+'|C'),'Bận chiều '+fmtD(d))).join('')+'</div>',foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="save-busy" data-id="'+l.id+'">Lưu lịch bận</button>'});
-  },
-  async 'save-busy'(t){
+  'teaching-schedule'(t){
     const l=lec(t.dataset.id);if(!l)return;
-    const busy=[...document.querySelectorAll('#modal .bk:checked')].map(x=>x.value);
-    const items=busy.map(v=>{const [d,b]=v.split('|');return {ngay_ban:d,tu_tiet:b==='S'?1:7,den_tiet:b==='S'?6:12,ly_do:null}});
-    try{await API.replaceBusy(l.id,items);await refreshLecturers(false);closeModal();render();toast('Đã lưu lịch bận. Lịch dạy không thay đổi; lịch bận khai báo tại đây được ưu tiên sau.')}catch(e){toast(e.message)}
+    teachingEdit={id:l.id,items:(l.teach||[]).map(teachingEntry).sort((a,b)=>a.date.localeCompare(b.date)||a.start-b.start||a.end-b.end)};
+    renderTeachingEditor();
+  },
+  'add-teaching-row'(){
+    if(!teachingEdit)return;
+    const date=$('#teachDate').value,start=Number($('#teachStart').value),end=Number($('#teachEnd').value),er=$('#teachErr');
+    er.textContent='';
+    if(!date){er.textContent='Hãy chọn ngày dạy.';return}
+    if(!Number.isInteger(start)||!Number.isInteger(end)||start<1||end>12||start>end){er.textContent='Tiết bắt đầu và kết thúc phải nằm trong khoảng 1–12, và tiết bắt đầu không sau tiết kết thúc.';return}
+    if(teachingEdit.items.some(x=>x.date===date&&x.start===start&&x.end===end)){er.textContent='Lịch dạy này đã có trong danh sách.';return}
+    teachingEdit.items.push({date,start,end,source:null,note:null});
+    teachingEdit.items.sort((a,b)=>a.date.localeCompare(b.date)||a.start-b.start||a.end-b.end);
+    renderTeachingEditor();
+  },
+  'remove-teaching-row'(t){
+    if(!teachingEdit)return;
+    teachingEdit.items.splice(Number(t.dataset.index),1);
+    renderTeachingEditor();
+  },
+  async 'save-teaching-schedule'(t){
+    if(!teachingEdit)return;
+    const l=lec(teachingEdit.id);if(!l)return;
+    const items=teachingEdit.items.map(x=>({ngay_day:x.date,tu_tiet:x.start,den_tiet:x.end,nguon_file:x.source??null,ghi_chu:x.note??null}));
+    const label=t.textContent;t.disabled=true;t.textContent='Đang lưu…';
+    try{
+      await API.replaceTeaching(l.id,items);
+      teachingEdit=null;await refreshLecturers(false);closeModal();render();toast('Đã lưu lịch dạy. Lịch bận không thay đổi.');
+    }catch(e){t.disabled=false;t.textContent=label;const er=$('#teachErr');if(er)er.textContent=e.message}
   },
   'clear-schedule'(t){
     const l=lec(t.dataset.id);if(!l)return;
@@ -640,24 +692,26 @@ const A={
   async 'force-run'(){await autoRun()},
   pick(t){pick={ex:+t.dataset.ex,q:''};const e=exm(pick.ex);openModal({title:'Chọn giảng viên · '+(e.period||SES[e.ses])+', '+fmtD(e.date),wide:true,body:'<p class="muted">'+LB[e.kind]+' · cần '+e.need+' giảng viên</p><div class="tools" style="margin-top:10px"><div class="grow"><input type="text" data-inp="pick-q" placeholder="Tìm giảng viên" aria-label="Tìm giảng viên"></div><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="lockNew" checked>Khóa phân công này</label></div><div class="pl" id="pickList">'+pickList()+'</div>'})},
   'pick-ok'(t){
-    const e=exm(pick.ex),lid=t.dataset.l;if(e.asg.length>=e.need){toast('Ca thi đã đủ giảng viên cần phân công.');return}const issues=hardIssues(e,lid);if(issues.length){toast('Không thể phân công: '+issues.join(', '));return}const lock=$('#lockNew').checked;e.asg.push({l:lid,lock:lock});closeModal();render();
+    const e=exm(pick.ex),lid=t.dataset.l;if(e.asg.length>=e.need){toast('Ca thi đã đủ giảng viên cần phân công.');return}const issues=hardIssues(e,lid);if(issues.length){toast('Không thể phân công: '+issues.join(', '));return}const lock=$('#lockNew').checked;e.asg.push({l:lid,lock:lock});S.scheduleDraftDirty=true;save();closeModal();render();
   },
   async 'publish-assignments'(){
     const failures=hardConstraintFailures();
     if(failures.length){toast('Chưa lưu được: còn vi phạm ràng buộc cứng — '+failures.map(x=>x.name+' '+x.pct+'%').join(', ')+'. Hãy xếp lại hoặc sửa phân công trước.');return}
-    try{await persistAssignments();toast('Đã lưu thành công, giảng viên có thể xem lịch.')}catch(e){toast('Không lưu được phân công: '+(e.message||e))}
+    try{await persistAssignments();S.schedulePublished=true;S.scheduleDraftDirty=false;S.exams.forEach(e=>e.so_da_cap=e.asg.length);save();render();toast('Đã lưu thành công, giảng viên có thể xem lịch.')}catch(e){toast('Không lưu được phân công: '+(e.message||e))}
   },
   async 'unpublish-assignments'(){
     const maDot=S.exams.find(e=>e.ma_dot)?.ma_dot||window.__MA_DOT;
     if(!maDot){toast('Chưa xác định được đợt thi cần gỡ lịch.');return}
-    if(!confirm('Thu hồi toàn bộ lịch đã công bố của đợt '+maDot+' khỏi lịch giảng viên? Thao tác này xóa phân công đã lưu trong hệ thống.'))return;
+    if(!confirm('Thu hồi lịch đã công bố của đợt '+maDot+' khỏi lịch giảng viên? Bản phân công trên bảng admin sẽ được giữ lại làm nháp.'))return;
     try{
       const result=await API.removeSavedAssignments(maDot);
-      S.exams.forEach(e=>{e.so_da_cap=0;e.asg.forEach(a=>{a.lock=false})});
+      // Chỉ gỡ bản công bố trên máy chủ; giữ nguyên phân công và khóa trên bảng admin.
+      S.exams.forEach(e=>{e.so_da_cap=0});
+      S.schedulePublished=false;S.scheduleDraftDirty=S.exams.some(e=>e.asg.length>0);
       save();render();
       const deleted=Number(result.assignments_deleted)||0;
       toast(deleted
-        ?'Đã thu hồi '+deleted+' phân công của đợt '+maDot+' khỏi lịch giảng viên.'
+        ?'Đã thu hồi '+deleted+' phân công khỏi lịch giảng viên. Bản xếp lịch vẫn được giữ trên bảng admin.'
         :'Đợt '+maDot+' không có phân công đã công bố. Nếu lịch vẫn hiện, ca đó có thể thuộc đợt khác.');
     }catch(e){toast('Không gỡ được lịch đã lưu: '+(e.message||e))}
   },
@@ -670,9 +724,9 @@ const A={
     }catch(e){toast('Không cập nhật được quyền xem lịch: '+e.message)}
   },
   'refresh-schedule-sharing'(){loadScheduleSharingStatus(true)},
-  lock(t){const e=exm(+t.dataset.ex),a=e.asg.find(x=>String(x.l)===String(t.dataset.l));a.lock=!a.lock;render()},
-  unasg(t){const e=exm(+t.dataset.ex);e.asg=e.asg.filter(x=>String(x.l)!==String(t.dataset.l));render()},
-  'clear-unlocked'(){let n=0;S.exams.forEach(e=>{const k=e.asg.filter(a=>a.lock);n+=e.asg.length-k.length;e.asg=k});render();toast('Đã xóa '+n+' mục bản nháp. Lịch đã công bố của giảng viên không đổi; muốn gỡ, chọn “Thu hồi lịch đã công bố”.')},
+  lock(t){const e=exm(+t.dataset.ex),a=e.asg.find(x=>String(x.l)===String(t.dataset.l));a.lock=!a.lock;S.scheduleDraftDirty=true;save();render()},
+  unasg(t){const e=exm(+t.dataset.ex);e.asg=e.asg.filter(x=>String(x.l)!==String(t.dataset.l));S.scheduleDraftDirty=true;save();render()},
+  'clear-unlocked'(){let n=0;S.exams.forEach(e=>{const k=e.asg.filter(a=>a.lock);n+=e.asg.length-k.length;e.asg=k});if(n){S.scheduleDraftDirty=true;save()}render();toast('Đã xóa '+n+' phân công chưa khóa khỏi bảng nháp. Lịch đã công bố chỉ bị gỡ khi dùng “Thu hồi lịch đã công bố”.')},
   'save-hist'(){snapshot('Thủ công');render();toast('Đã lưu bản này vào lịch sử.')},
   tab6(t){tab6=t.dataset.t;render()},
   xmode(t){F.xm=t.dataset.m;render()},
@@ -712,7 +766,7 @@ const A={
   restore(t){
     const h=S.hist.find(x=>x.id===+t.dataset.id);if(!h)return;
     h.snap.forEach(p=>{const e=exm(p[0]);if(e)e.asg=p[1].filter(x=>lec(x[0])).map(x=>({l:x[0],lock:!!x[1]}))});
-    view='sched';render();toast('Đã khôi phục bản xếp lúc '+h.time+'.');
+    S.scheduleDraftDirty=true;save();view='sched';render();toast('Đã khôi phục bản xếp lúc '+h.time+' vào bảng nháp.');
   },
   'del-hist'(t){S.hist=S.hist.filter(x=>x.id!==+t.dataset.id);render()}
 };

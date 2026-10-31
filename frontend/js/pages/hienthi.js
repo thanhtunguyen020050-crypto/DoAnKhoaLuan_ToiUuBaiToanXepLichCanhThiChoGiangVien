@@ -6,18 +6,19 @@ function render(){
   if(!canSee(view))view='home';
   const pages={home:homeView,sys:sysView,lec:lecView,exam:examView,cons:consView,sched:schedView,rep:repView,accounts:accountsView,busy_reqs:busyReqsView};
   app.innerHTML=topbar()+'<div class="shell">'+sidebar()+'<main class="main">'+pages[view]()+'</main></div>';
-  const lc=$('#lcount');if(lc)lc.textContent=S.lecs.length+' giảng viên';refreshAdminBell();refreshAdminBusyCount();ensureAdminRequestPolling();
+  updateLecturerCount();refreshAdminBell();refreshAdminBusyCount();ensureAdminRequestPolling();
   if(view==='sched')loadScheduleSharingStatus();
 }
 function updateScheduleSharingControls(){
-  const status=$('#scheduleSharingStatus'),toggle=document.querySelector('[data-act="toggle-schedule-sharing"]'),reload=document.querySelector('[data-act="refresh-schedule-sharing"]');
+  const status=$('#scheduleSharingStatus'),badge=$('#scheduleSharingBadge'),toggle=document.querySelector('[data-act="toggle-schedule-sharing"]'),reload=document.querySelector('[data-act="refresh-schedule-sharing"]');
   if(!status||!toggle)return;
-  if(scheduleSharingLoading){status.textContent='Đang tải trạng thái chia sẻ…';toggle.textContent='Đang đọc…';toggle.disabled=true;if(reload)reload.disabled=true;return}
-  if(scheduleSharingError){status.textContent='Không tải được: '+scheduleSharingError;toggle.textContent='Chưa sẵn sàng';toggle.disabled=true;if(reload)reload.disabled=false;return}
+  if(scheduleSharingLoading){status.textContent='Đang tải trạng thái chia sẻ…';if(badge)badge.textContent='Đang tải…';toggle.innerHTML='<span class="sched-switch" aria-hidden="true"><i></i></span><span>Đang đọc…</span>';toggle.className='btn sched-share-toggle';toggle.disabled=true;if(reload)reload.disabled=true;return}
+  if(scheduleSharingError){status.textContent='Không tải được: '+scheduleSharingError;if(badge)badge.textContent='Chưa sẵn sàng';toggle.innerHTML='<span class="sched-switch" aria-hidden="true"><i></i></span><span>Chưa sẵn sàng</span>';toggle.className='btn sched-share-toggle';toggle.disabled=true;if(reload)reload.disabled=false;return}
   const enabled=!!scheduleSharingEnabled;
   status.textContent=enabled?'Đang bật — giảng viên có thể chọn xem lịch của nhau.':'Đang tắt — giảng viên chỉ xem lịch cá nhân.';
-  toggle.textContent=enabled?'Tắt chia sẻ lịch':'Cho phép giảng viên xem lịch của nhau';
-  toggle.className='btn sm '+(enabled?'danger':'pri');
+  if(badge){badge.textContent=enabled?'Đang bật · Xem lịch chung':'Đang tắt · Chỉ xem cá nhân';badge.classList.toggle('is-on',enabled)}
+  toggle.innerHTML='<span class="sched-switch" aria-hidden="true"><i></i></span><span>Cho phép xem chung</span>';
+  toggle.className='btn sched-share-toggle'+(enabled?' is-on':'');
   toggle.setAttribute('aria-pressed',String(enabled));
   toggle.disabled=false;
   if(reload)reload.disabled=false;
@@ -72,10 +73,16 @@ function copyText(t){
 /* ===== Chọn giảng viên tham gia đợt gác thi ===== */
 let dotPick=null;
 function dotLecFiltered(){
-  const q=dotPick.q.trim().toLowerCase();
-  return S.lecs.filter(l=>!q||l.name.toLowerCase().indexOf(q)>=0);
+  const q=plain(dotPick.q||'');
+  return S.lecs.filter(l=>!q||plain([l.name,l.id,l.dept].join(' ')).includes(q));
 }
 function dotLecCount(){return dotPick.sel.size+' / '+S.lecs.length+' giảng viên được chọn'}
+function updateDotLecSelectAll(){
+  const control=document.querySelector('[data-chg="dot-lec-all"]');if(!control)return;
+  const visible=dotLecFiltered(),selected=visible.filter(l=>dotPick.sel.has(String(l.id))).length;
+  control.checked=visible.length>0&&selected===visible.length;
+  control.indeterminate=selected>0&&selected<visible.length;
+}
 function dotLecRows(){
   const L=dotLecFiltered();
   if(!L.length)return '<p class="muted" style="padding:14px 0">Không có giảng viên phù hợp.</p>';
@@ -85,10 +92,11 @@ function dotLecRows(){
 }
 function dotLecForm(){
   dotPick={q:'',sel:new Set(S.lecs.filter(inDot).map(l=>String(l.id)))};
-  openModal({title:'Chọn giảng viên tham gia đợt gác thi',wide:true,
+  openModal({title:'Chọn giảng viên tham gia đợt gác thi',wide:true,className:'dot-lecturer-picker',
     body:'<p class="hint">Chỉ giảng viên được tick mới được tính định mức và xếp gác trong đợt <b>'+esc(window.__MA_DOT)+'</b>.</p>'+
-      '<div class="tools"><div class="grow"><input type="text" data-inp="dot-lec-q" placeholder="Tìm theo tên giảng viên"></div>'+
+      '<div class="tools dot-picker-toolbar"><div class="grow"><input type="text" data-inp="dot-lec-q" placeholder="Tìm theo tên hoặc mã giảng viên"></div>'+
       '<label class="muted"><input type="checkbox" data-chg="dot-lec-all"> Chọn tất cả đang hiển thị</label></div>'+
       '<div id="dotLecList">'+dotLecRows()+'</div><p class="muted" id="dotLecCount">'+dotLecCount()+'</p><div class="err" id="ferr"></div>',
     foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="save-dot-lec">Lưu danh sách</button>'});
+  updateDotLecSelectAll();
 }

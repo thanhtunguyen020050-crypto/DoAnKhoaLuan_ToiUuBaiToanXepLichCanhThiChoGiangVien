@@ -5,6 +5,13 @@ const half=s=>s<=2?'S':'C';
 const fmtD=d=>{const p=d.split('-');return p[2]+'/'+p[1]+'/'+p[0]};
 const wd=d=>{const p=d.split('-').map(Number);return WD[new Date(p[0],p[1]-1,p[2]).getDay()]};
 const lec=id=>S.lecs.find(l=>String(l.id)===String(id));
+function teachingEntry(t){
+  if(typeof t==='string'){
+    const [date,range='']=t.split('|'),m=range.match(/^(\d+)\s*[→>-]\s*(\d+)$/);
+    return {date,start:m?Number(m[1]):Number(range)||1,end:m?Number(m[2]):Number(range)||2,source:null,note:null};
+  }
+  return {date:String(t&& (t.date??t.NgayDay) ||'').slice(0,10),start:Number(t&&(t.start??t.TuTiet))||1,end:Number(t&&(t.end??t.DenTiet))||2,source:(t&&(t.source??t.NguonFile))??null,note:(t&&(t.note??t.GhiChu))??null};
+}
 const inDot=l=>l.inDot!==false;
 const exm=id=>S.exams.find(e=>e.id===id);
 const cmpEx=(a,b)=>a.date.localeCompare(b.date)||rangeFor(a)[0]-rangeFor(b)[0]||rangeFor(a)[1]-rangeFor(b)[1]||String(a.room).localeCompare(String(b.room));

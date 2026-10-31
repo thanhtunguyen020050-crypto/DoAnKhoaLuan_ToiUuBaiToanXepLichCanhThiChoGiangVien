@@ -22,7 +22,7 @@ async function refreshLecturers(showToast=true){
           const d=String(x.NgayBan).slice(0,10), block=Number(x.TuTiet)<=6?'S':'C';
           l.busy.push({key:d+'|'+block,priority:Number(x.UuTien)||3,reason:x.LyDo||null});
         });
-        tr.forEach(x=>{const d=String(x.NgayDay).slice(0,10);l.teach.push(d+'|'+Number(x.TuTiet)+'-'+Number(x.DenTiet))});
+        tr.forEach(x=>{l.teach.push({date:String(x.NgayDay).slice(0,10),start:Number(x.TuTiet),end:Number(x.DenTiet),source:x.NguonFile??null,note:x.GhiChu??null})});
       }catch(_){ }
     }
     save();render();
@@ -43,6 +43,9 @@ async function refreshExamData(showToast=false){
       const oldE=old.get(x.MaCa); const slot=EXAM_SLOTS.find(s=>s[1]===Number(x.TuTiet)&&s[2]===Number(x.DenTiet));
       return {id:oldE?oldE.id:(S.nid++),ma_ca:x.MaCa,code:x.MaCa,name:'Ca thi',dept:'',room:x.PhongThi||'',asg:oldE?oldE.asg:[],date:String(x.NgayThi).slice(0,10),ses:Number(x.Buoi)||1,half:Number(x.Buoi)<=1?'S':'C',period:slot?slot[0]:Number(x.TuTiet)+' → '+Number(x.DenTiet),need:Number(x.SoGVCanCap),kind:x.HinhThucThi==='Tự luận'?'TL':'LT',ma_dot:x.MaDot,hoc_ky:x.HocKy,nam_hoc:x.NamHoc,so_da_cap:Number(x.SoGVDaCap||0)};
     });
+    // Đồng bộ trạng thái công bố từ SQL khi bảng hiện tại không có bản nháp chưa lưu.
+    // Nếu có bản nháp cục bộ, giữ nguyên trạng thái do người dùng đang chỉnh sửa.
+    if(!S.scheduleDraftDirty)S.schedulePublished=S.exams.some(e=>e.so_da_cap>0);
     save();render();if(showToast)toast('Đã làm mới danh sách ca thi.');return true;
   }catch(e){if(showToast)toast('Không thể làm mới danh sách ca thi. Vui lòng thử lại hoặc liên hệ quản trị viên.');return false}
 }

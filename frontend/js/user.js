@@ -82,7 +82,7 @@
       ['notices','Thông báo',IC.bell],
       ['password','Đổi mật khẩu',IC.key]
     ];
-    $('#app').innerHTML=topbar()+`<div class="shell"><aside class="side"><div class="sec">Menu chính</div><nav class="nav">${nav.map(([id,label,ic])=>`<button data-page="${id}" class="${state.page===id?'on':''}"${state.page===id?' aria-current="page"':''}><span class="n">${ic}</span>${label}${id==='notices'?'<span class="nb" id="navDot" hidden></span>':''}</button>`).join('')}</nav><div class="side-foot"><b>HUIT · Khoa CNTT</b><span>Hệ thống nội bộ</span><span>Phiên bản 1.0.0</span></div></aside><main class="main">${content}</main></div>`;
+    $('#app').innerHTML=topbar()+`<div class="shell"><aside class="side"><div class="sec">Menu chính</div><nav class="nav">${nav.map(([id,label,ic])=>`<button data-page="${id}" class="${state.page===id?'on':''}"${state.page===id?' aria-current="page"':''}><span class="n">${ic}</span>${label}${id==='notices'?'<span class="nb" id="navDot" hidden></span>':''}</button>`).join('')}</nav><div class="side-foot"><b>HUIT · Khoa CNTT</b><span>Hệ thống nội bộ</span><span>Phiên bản ProMax</span></div></aside><main class="main">${content}</main></div>`;
     document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{state.page=b.dataset.page;renderPage()});
     $('#notifications').onclick=()=>{state.page='notices';renderPage()};
     $('#changePassword').onclick=()=>{state.page='password';renderPage()};
@@ -106,11 +106,78 @@
   }
 
   function passwordView(required=false){
-    $('#app').innerHTML=`<div class="login"><section class="login-art"><div class="lb">${logoMark(72)}<div class="uni">Trường Đại học Công Thương<br>Thành phố Hồ Chí Minh</div></div><div><h2>${required?'Đổi mật khẩu bắt buộc':'Bảo mật tài khoản'}</h2><p>Đặt mật khẩu riêng để bảo vệ tài khoản giảng viên.</p></div></section><section class="login-form"><div><h1>${required?'Đổi mật khẩu lần đầu':'Đổi mật khẩu'}</h1><p class="muted" style="margin-bottom:18px">8–16 ký tự, ít nhất một chữ hoa A–Z và một ký tự đặc biệt.</p><form id="pwForm"><label class="f"><span>Mật khẩu hiện tại</span><input id="oldPw" type="password" required></label><label class="f"><span>Mật khẩu mới</span><input id="newPw" type="password" required minlength="8" maxlength="16"></label><label class="f"><span>Nhập lại mật khẩu mới</span><input id="confirmPw" type="password" required minlength="8" maxlength="16"></label><div class="err" id="error"></div><button class="btn pri" type="submit">Lưu mật khẩu</button>${required?'':' <button class="btn" type="button" id="back">Quay lại</button>'}</form></div></section></div>`;
+    const account=esc(state.user?.ma_gv||'');
+    $('#app').innerHTML=`<div class="login password-screen">
+      <section class="login-art password-art">
+        <div class="login-brand">${logoMark(60)}<div class="login-university"><b>Trường Đại học Công Thương TP.HCM</b><span>Khoa Công nghệ Thông tin</span></div></div>
+        <div class="login-intro">
+          <div class="login-kicker"><span>${IC.shield}</span>${required?'Yêu cầu bảo mật tài khoản':'Cập nhật bảo mật tài khoản'}</div>
+          <h2>${required?'Thiết lập mật khẩu cá nhân':'Bảo vệ tài khoản của bạn'}</h2>
+          <p>${required?'Để bảo vệ thông tin lịch coi thi và quyền lợi cá nhân, vui lòng đổi mật khẩu tạm được cấp trong lần đăng nhập đầu tiên.':'Hãy đổi mật khẩu định kỳ để bảo vệ thông tin lịch coi thi và quyền truy cập tài khoản.'}</p>
+          <div class="login-feature-card password-progress">
+            <div class="login-feature-heading"><span class="login-check">✓</span><b>${required?'TIẾN TRÌNH KÍCH HOẠT TÀI KHOẢN':'BẢO MẬT TÀI KHOẢN'}</b></div>
+            <div class="password-steps">
+              <div class="password-step done"><i>✓</i><span>1. ${required?'Đăng nhập bằng mật khẩu tạm':'Đăng nhập tài khoản'}</span></div>
+              <div class="password-step current"><i>2</i><span>2. ${required?'Đổi mật khẩu bảo mật mới':'Cập nhật mật khẩu'} <b>(Đang thực hiện)</b></span></div>
+              <div class="password-step${required?'':' done'}"><i>${required?'3':'✓'}</i><span>3. ${required?'Truy cập bảng tra cứu lịch gác thi':'Tiếp tục sử dụng cổng giảng viên'}</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="login-art-footer"><span>© ${new Date().getFullYear()} Khoa CNTT – HUIT</span><span>Hỗ trợ kỹ thuật: Giáo vụ Khoa</span></div>
+      </section>
+      <section class="login-form password-form">
+        <div class="password-panel">
+          <div class="password-topline"><span class="password-account"><i></i>Tài khoản: <b>${account}</b></span><button class="password-logout" id="passwordLogout" type="button">${IC.logout} Đăng xuất</button></div>
+          <div class="login-card password-card">
+            <h1>${required?'Đổi mật khẩu lần đầu':'Đổi mật khẩu'}</h1>
+            <p class="login-description">Thiết lập mật khẩu mới đáp ứng các tiêu chuẩn an toàn bên dưới để ${required?'mở khóa toàn bộ tính năng':'bảo vệ tài khoản'}.</p>
+            <form id="pwForm" novalidate>
+              <label class="f login-field"><span>Mật khẩu hiện tại${required?' (Mật khẩu tạm)':''}</span><div class="login-control"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m11 12 8-8 3 3-2 2 2 2-3 3-2-2-3 3"/></svg><input class="password-input" id="oldPw" type="password" required autocomplete="current-password" placeholder="${required?'Nhập lại mật khẩu tạm vừa cấp':'Nhập mật khẩu hiện tại'}"></div></label>
+              <div class="password-field-heading"><label class="f login-field" for="newPw"><span>Mật khẩu mới</span></label><span class="password-live-status" id="passwordLiveStatus">Chưa nhập</span></div>
+              <div class="login-control"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg><input class="password-input" id="newPw" type="password" required autocomplete="new-password" placeholder="Tạo mật khẩu từ 8–16 ký tự"></div>
+              <div class="password-strength" id="passwordStrength" aria-hidden="true"><i></i><i></i><i></i></div>
+              <section class="password-rules" aria-label="Yêu cầu mật khẩu">
+                <h2>YÊU CẦU MẬT KHẨU:</h2>
+                <ul>
+                  <li id="ruleLength"><i></i><span>Độ dài từ <b>8 đến 16 ký tự</b></span></li>
+                  <li id="ruleUpper"><i></i><span>Ít nhất <b>01 chữ cái in hoa (A–Z)</b></span></li>
+                  <li id="ruleSpecial"><i></i><span>Ít nhất <b>01 ký tự đặc biệt</b> (ví dụ: !@#$%...)</span></li>
+                </ul>
+              </section>
+              <div class="password-confirm-heading"><label class="f login-field" for="confirmPw"><span>Xác nhận mật khẩu mới</span></label><span class="password-live-status" id="confirmLiveStatus">Chưa nhập</span></div>
+              <div class="login-control"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 19 6v5c0 5-3 8-7 10-4-2-7-5-7-10V6z"/><path d="m9 12 2 2 4-4"/></svg><input class="password-input" id="confirmPw" type="password" required autocomplete="new-password" placeholder="Nhập lại chính xác mật khẩu mới"></div>
+              <div class="err" id="error" role="alert"></div>
+              <button class="btn pri login-submit" id="pwSave" type="submit" disabled><span class="password-submit-check">✓</span>Lưu mật khẩu và tiếp tục</button>
+              ${required?'':'<button class="password-back" id="back" type="button">Quay lại lịch gác thi</button>'}
+            </form>
+          </div>
+          <p class="password-footnote">Mật khẩu của bạn được mã hóa an toàn theo tiêu chuẩn bảo mật của trường.</p>
+        </div>
+      </section>
+    </div>`;
     if($('#back'))$('#back').onclick=()=>{state.page='schedule';renderPage()};
+    $('#passwordLogout').onclick=()=>{state.user=null;sessionStorage.removeItem('authRole');sessionStorage.removeItem('lecturerSession');sessionStorage.removeItem('authToken');sessionStorage.removeItem('mustChangePassword');location.replace('login.html')};
+    const oldInput=$('#oldPw'),newInput=$('#newPw'),confirmInput=$('#confirmPw'),saveButton=$('#pwSave');
+    const updatePasswordFeedback=()=>{
+      const value=newInput.value, length=Array.from(value).length;
+      const checks={length:length>=8&&length<=16,upper:/[A-Z]/.test(value),special:/[^A-Za-z0-9]/.test(value)};
+      [['#ruleLength',checks.length],['#ruleUpper',checks.upper],['#ruleSpecial',checks.special]].forEach(([selector,valid])=>$(selector).classList.toggle('met',valid));
+      const score=Object.values(checks).filter(Boolean).length;
+      $('#passwordStrength').dataset.level=String(score);
+      $('#passwordLiveStatus').textContent=value?(score===3?'Đạt yêu cầu':`${score}/3 yêu cầu`):'Chưa nhập';
+      $('#passwordLiveStatus').classList.toggle('ready',score===3);
+      const confirmation=confirmInput.value, matches=Boolean(confirmation)&&confirmation===value;
+      $('#confirmLiveStatus').textContent=confirmation?(matches?'Khớp mật khẩu':'Chưa khớp'):'Chưa nhập';
+      $('#confirmLiveStatus').classList.toggle('ready',matches);
+      saveButton.disabled=!(oldInput.value&&score===3&&matches);
+    };
+    [oldInput,newInput,confirmInput].forEach(input=>input.addEventListener('input',updatePasswordFeedback));
+    updatePasswordFeedback();
     $('#pwForm').onsubmit=async e=>{
       e.preventDefault();
       const old=$('#oldPw').value,n=$('#newPw').value,c=$('#confirmPw').value,er=$('#error');
+      updatePasswordFeedback();
+      if(saveButton.disabled)return;
       if(n!==c){er.textContent='Mật khẩu nhập lại không khớp.';return}
       if(n.length<8||n.length>16||!/[A-Z]/.test(n)||! /[^A-Za-z0-9]/.test(n)){
         er.textContent='Mật khẩu phải dài 8–16 ký tự, có ít nhất một chữ hoa và một ký tự đặc biệt.';return
