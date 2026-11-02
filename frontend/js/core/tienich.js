@@ -73,7 +73,7 @@ function parseDate(v){
   return null;
 }
 function plain(v){return String(v==null?'':v).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/đ/g,'d').replace(/[\u00a0\u200b\ufeff]/g,' ').replace(/\s+/g,' ').trim()}
-function parsePeriod(v){const m=String(v||'').match(/(\d{1,2})\s*(?:->|\u2192|\u279c|\u2013|\u2014|-)\s*(\d{1,2})/);return m&&+m[1]<+m[2]&&+m[1]>=1&&+m[2]<=12?{start:+m[1],end:+m[2],key:+m[1]+'-'+(+m[2])}:null}
-function parseExamSlot(v){const r=parsePeriod(v);if(r){const x=EXAM_SLOTS.find(s=>s[1]===r.start&&s[2]===r.end);return{start:r.start,end:r.end,label:x?x[0]:r.start+' → '+r.end}}const m=plain(v).match(/(?:ca\s*)?([1-4])(?:\D|$)/);if(!m)return null;const x=EXAM_SLOTS[[0,2,5,7][+m[1]-1]];return{start:x[1],end:x[2],label:x[0]}}
+function parsePeriod(v){const m=String(v||'').match(/(\d{1,2})\s*(?:->|\u2192|\u279c|\u2013|\u2014|-)\s*(\d{1,2})/);return m&&+m[1]<+m[2]&&+m[1]>=1&&+m[2]<=16?{start:+m[1],end:+m[2],key:+m[1]+'-'+(+m[2])}:null}
+function parseExamSlot(v){const r=parsePeriod(v);if(r){const x=EXAM_SLOTS.find(s=>s[1]===r.start&&s[2]===r.end);return{start:r.start,end:r.end,label:x?x[0]:r.start+' → '+r.end}}const m=plain(v).match(/^(?:ca\s*)?([1-4])$/);if(!m)return null;const x=EXAM_SLOTS[[0,2,5,7][+m[1]-1]];return{start:x[1],end:x[2],label:x[0]}}
 function teachName(rows,key){const r=rows.find(x=>x.name.trim().toLocaleLowerCase('vi')===key);return r?r.name:key}
 

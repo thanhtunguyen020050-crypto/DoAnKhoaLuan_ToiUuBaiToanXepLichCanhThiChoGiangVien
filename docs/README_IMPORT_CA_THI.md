@@ -19,10 +19,11 @@ File import ca thi hỗ trợ cả định dạng **.xlsx**, **.xls**, **.csv**.
 
 - **Ngày thi**: Ngày thực tế định dạng `dd/mm/yyyy` (ví dụ: `26/10/2026`).
 - **Ca/tiết**: Chấp nhận các dạng:
-  - Dạng tiết: `1 → 2`, `1 → 3`, `3 → 4`, `4 → 6`, `5 → 6`, `7 → 8`, `7 → 9`, `9 → 10`, `10 → 12`, `11 → 12` (hoặc viết dấu gạch ngang `1-2`, `3-4`,...).
+  - Dạng tiết: `1 → 2`, `1 → 3`, `3 → 4`, `4 → 6`, `5 → 6`, `7 → 8`, `7 → 9`, `9 → 10`, `10 → 12`, `11 → 12`, `13 → 14` (hoặc viết dấu gạch ngang `1-2`, `3-4`,...).
   - Dạng ca: `Ca 1`, `Ca 2`, `Ca 3`, `Ca 4`.
 - **Số GV cần**: Số nguyên từ 1 đến 30.
 - **Loại ca**: `Lý thuyết` (hoặc viết tắt `LT`), `Tự luận` (hoặc viết tắt `TL`).
+- Nếu file không có cột **Loại ca**, hệ thống tự suy ra theo độ dài ca: 2 tiết là **Lý thuyết**; 3 tiết là **Tự luận**.
 
 ---
 

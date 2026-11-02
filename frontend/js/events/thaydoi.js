@@ -140,7 +140,7 @@ const C={
           const d=parseDate(rows[dateRow][c]);if(d)lastDate=d;
           const slot=parseExamSlot(rows[periodRow][c]),need=parseInt(String(rows[needRow][c]||'').replace(/[^0-9]/g,''),10);
           if(!slot&&!rows[dateRow][c])continue;
-          const raw=plain(kindRow>=0?rows[kindRow][c]:''),kind=raw==='lt'||raw.includes('ly thuyet')?'LT':raw==='tl'||raw.includes('tu luan')?'TL':'';
+          const raw=plain(kindRow>=0?rows[kindRow][c]:''),kind=raw==='lt'||raw.includes('ly thuyet')?'LT':raw==='tl'||raw.includes('tu luan')?'TL':!raw&&slot?(slot.end-slot.start===1?'LT':'TL'):'';
           const half=plain(halfRow>=0?rows[halfRow][c]:''),ses=slot?(slot.start<3?1:slot.start<6?2:slot.start<9?3:4):0,key=lastDate+'|'+(slot&&slot.label);
           let m='';if(!lastDate)m='Thiếu ngày thi';else if(!slot)m='Thiếu hoặc sai ca/tiết';else if(!Number.isInteger(need)||need<1||need>30)m='Số giảng viên cần phải từ 1 đến 30';else if(!kind)m='Thiếu loại ca Lý thuyết/Tự luận';
           if(!m&&seen[key])m='Ngày và ca/tiết bị lặp với cột '+seen[key];else if(!m)seen[key]=c+1;
@@ -155,13 +155,19 @@ const C={
         const cells=Array.from(rows[i]||[],v=>plain(v)),find=fn=>cells.findIndex(v=>fn(String(v??'')));
         const d=find(x=>x.includes('ngay')),s=find(x=>x.includes('ca')||x.includes('tiet')||x.includes('slot')),n=find(x=>x.includes('can')||x.includes('so gv')||x.includes('giang vien')),k=find(x=>x.includes('loai'));
         // File phân công dự kiến có thể chỉ gồm Ngày thi, Tiết và Số GV cần cấp.
-        // Khi không có cột Loại ca, dùng LT để vẫn đưa được lịch vào luồng xếp lịch.
+        // Nếu thiếu Loại ca: 2 tiết mặc định Lý thuyết, 3 tiết mặc định Tự luận.
         if(d>=0&&s>=0&&n>=0){ix={date:d,slot:s,need:n,kind:k};header=i;break}
       }
       rows.forEach((r,i)=>{
         if(i<=header||!r||!r.some(x=>String(x||'').trim()))return;
-        const date=parseDate(r[ix.date]),slot=parseExamSlot(r[ix.slot]),need=parseInt(String(r[ix.need]||'').replace(/[^0-9]/g,''),10),raw=ix.kind>=0?plain(r[ix.kind]):'lt';
-        const kind=raw==='lt'||raw.includes('ly thuyet')?'LT':raw==='tl'||raw.includes('tu luan')?'TL':'';
+        const dateText=String(r[ix.date]||'').trim(),slotText=String(r[ix.slot]||'').trim(),needText=String(r[ix.need]||'').trim();
+        const date=parseDate(dateText),slot=parseExamSlot(slotText);
+        // Skip footer/signature rows that contain no recognizable exam data, such as
+        // "TP. HCM, ngày ...". Keep rows with any date, slot, or numeric need signal
+        // so malformed exam records still appear in the import error list.
+        if(!date&&!slot&&!/^\d+$/.test(needText))return;
+        const need=parseInt(needText.replace(/[^0-9]/g,''),10),raw=ix.kind>=0?plain(r[ix.kind]):'';
+        const kind=raw==='lt'||raw.includes('ly thuyet')?'LT':raw==='tl'||raw.includes('tu luan')?'TL':!raw&&slot?(slot.end-slot.start===1?'LT':'TL'):'';
         let m='';
         if(!date)m='Ngày thi không hợp lệ, cần dạng dd/mm/yyyy';else if(!slot)m='Ca/tiết không hợp lệ (ví dụ Ca 1 hoặc 1 → 2)';else if(!Number.isInteger(need)||need<1||need>30)m='Số giảng viên cần phải từ 1 đến 30';else if(!kind)m='Loại ca phải là Lý thuyết (LT) hoặc Tự luận (TL)';
         const ses=slot?(slot.start<3?1:slot.start<6?2:slot.start<9?3:4):0,key=date+'|'+(slot&&slot.label);
