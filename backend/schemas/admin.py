@@ -1,5 +1,6 @@
 """Request schemas cho API quản trị hệ thống thi."""
 from pydantic import BaseModel, Field
+from datetime import date
 
 
 class GiangVienIn(BaseModel):
@@ -46,6 +47,23 @@ class CaThiIn(BaseModel):
     den_tiet: int = Field(ge=1, le=16)
     hinh_thuc_thi: str = Field(pattern=r'^(Lý thuyết|Tự luận)$')
     so_gv_can_cap: int = Field(ge=1, le=30)
+
+
+class TrucDeImportRow(BaseModel):
+    ma_hp: str = Field(min_length=1, max_length=30)
+    mon_thi: str = Field(min_length=1, max_length=300)
+    ngay_thi: date
+    tu_tiet: int = Field(ge=1, le=16)
+    den_tiet: int = Field(ge=1, le=16)
+    ma_gv: str = Field(min_length=1, max_length=20)
+    so_dien_thoai: str | None = Field(default=None, max_length=30)
+    ghi_chu: str | None = Field(default=None, max_length=255)
+
+
+class TrucDeImportIn(BaseModel):
+    ma_dot: str = Field(min_length=1, max_length=20)
+    nguon_file: str | None = Field(default=None, max_length=255)
+    assignments: list[TrucDeImportRow] = Field(min_length=1, max_length=10000)
 
 
 class PhanCongItemIn(BaseModel):

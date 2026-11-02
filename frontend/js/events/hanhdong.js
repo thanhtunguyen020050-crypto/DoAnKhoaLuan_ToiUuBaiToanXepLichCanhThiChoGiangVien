@@ -1,9 +1,19 @@
 /* ========= Hành động (click) ========= */
 function renderTeachingEditor(){
   const l=teachingEdit&&lec(teachingEdit.id);if(!l)return;
-  const items=teachingEdit.items||[];
-  const rows=items.length?items.map((x,i)=>'<div style="display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--card)"><div style="flex:1;min-width:0"><b>'+esc(fmtD(x.date))+' · tiết '+x.start+'–'+x.end+'</b>'+(x.source?'<small style="display:block;color:var(--muted);margin-top:3px">Nguồn: '+esc(x.source)+'</small>':'')+(x.note?'<small style="display:block;color:var(--muted);margin-top:3px">'+esc(x.note)+'</small>':'')+'</div><button type="button" class="btn sm ghost danger icon-delete" data-act="remove-teaching-row" data-index="'+i+'" title="Xóa ca dạy này" aria-label="Xóa ca dạy này">'+IC.trash+'</button></div>').join(''):'<p class="muted" style="padding:12px 0">Chưa có ca dạy. Thêm ngày và khoảng tiết ở bên dưới.</p>';
-  openModal({title:(items.length?'Cập nhật':'Thêm')+' lịch dạy · '+l.name,wide:true,body:'<p class="muted" style="margin-bottom:12px">Khai báo ngày và khoảng tiết giảng viên đứng lớp. Các ca này được dùng để tránh phân công coi thi trùng giờ.</p><div style="display:grid;gap:8px;margin-bottom:12px">'+rows+'</div><div class="panel" style="margin:12px 0;padding:14px"><b>Thêm ca dạy</b><div style="display:grid;grid-template-columns:1.3fr 1fr 1fr auto;gap:10px;align-items:end;margin-top:10px"><label class="f" style="margin:0"><span>Ngày dạy</span><input type="date" id="teachDate" required></label><label class="f" style="margin:0"><span>Tiết bắt đầu</span><input type="number" id="teachStart" min="1" max="12" value="1" required></label><label class="f" style="margin:0"><span>Tiết kết thúc</span><input type="number" id="teachEnd" min="1" max="12" value="2" required></label><button type="button" class="btn" data-act="add-teaching-row">Thêm ca</button></div><p class="hint" style="margin:8px 0 0">Tiết hợp lệ từ 1 đến 12. Lịch dạy đã import sẽ được giữ lại khi lưu.</p><div class="err" id="teachErr" role="alert"></div></div>',foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="save-teaching-schedule" data-id="'+esc(l.id)+'">Lưu lịch dạy</button>'});
+  const items=teachingEdit.items||[],busy=teachingEdit.busy||[],savedDuty=teachingEdit.savedDuty||[],newDuty=teachingEdit.newDuty||[];
+  const teachingRows=items.length?items.map((x,i)=>`<div class="sched-manual-row"><div><b>${esc(fmtD(x.date))} \u00b7 ti\u1ebft ${x.start}\u2013${x.end}</b>${x.source?`<small>Ngu\u1ed3n: ${esc(x.source)}</small>`:''}</div><button type="button" class="btn sm ghost danger icon-delete" data-act="remove-teaching-row" data-index="${i}" aria-label="X\u00f3a ca d\u1ea1y">${IC.trash}</button></div>`).join(''):'<p class="muted sched-manual-empty">Ch\u01b0a c\u00f3 ca d\u1ea1y.</p>';
+  const busyRows=busy.length?busy.map((x,i)=>`<div class="sched-manual-row"><div><b>${esc(fmtD(x.date))} \u00b7 ti\u1ebft ${x.start}\u2013${x.end}</b><small>${esc(x.reason||'Ch\u01b0a ghi l\u00fd do')}</small></div><button type="button" class="btn sm ghost danger icon-delete" data-act="remove-manual-busy" data-index="${i}" aria-label="X\u00f3a l\u1ecbch b\u1eadn">${IC.trash}</button></div>`).join(''):'<p class="muted sched-manual-empty">Ch\u01b0a c\u00f3 l\u1ecbch b\u1eadn.</p>';
+  const dutyRows=[...savedDuty.map(x=>({saved:true,date:String(x.NgayThi).slice(0,10),start:x.TuTiet,end:x.DenTiet,code:x.MaHP,course:x.MonThi,source:x.NguonFile})),...newDuty.map((x,i)=>({...x,index:i}))];
+  const dutyList=dutyRows.length?dutyRows.map(x=>`<div class="sched-manual-row"><div><b>${esc(fmtD(x.date))} \u00b7 ti\u1ebft ${x.start}\u2013${x.end} \u00b7 ${esc(x.code)}</b><small>${esc(x.course)}${x.saved?' \u00b7 \u0110\u00e3 l\u01b0u'+(x.source?' \u00b7 '+esc(x.source):''):' \u00b7 Ch\u01b0a l\u01b0u'}</small></div>${x.saved?'':`<button type="button" class="btn sm ghost danger icon-delete" data-act="remove-manual-duty" data-index="${x.index}" aria-label="B\u1ecf l\u1ecbch tr\u1ef1c \u0111\u1ec1">${IC.trash}</button>`}</div>`).join(''):'<p class="muted sched-manual-empty">Ch\u01b0a c\u00f3 l\u1ecbch tr\u1ef1c \u0111\u1ec1 trong \u0111\u1ee3t n\u00e0y.</p>';
+  const reasons=[['','Kh\u00f4ng n\u00eau l\u00fd do'],['\u0110i c\u00f4ng t\u00e1c, h\u1ecdp theo quy\u1ebft \u0111\u1ecbnh c\u1ee7a Tr\u01b0\u1eddng','\u0110i c\u00f4ng t\u00e1c, h\u1ecdp theo quy\u1ebft \u0111\u1ecbnh c\u1ee7a Tr\u01b0\u1eddng'],['B\u1eadn vi\u1ec7c gia \u0111\u00ecnh (Hi\u1ebfu, h\u1ef7)','B\u1eadn vi\u1ec7c gia \u0111\u00ecnh (Hi\u1ebfu, h\u1ef7)'],['S\u1ef1 c\u1ed1 s\u1ee9c kh\u1ecfe / B\u1eadn vi\u1ec7c kh\u1ea9n c\u1ea5p \u0111\u1ed9t xu\u1ea5t (\u01afu ti\u00ean sau c\u00f9ng - trao \u0111\u1ed5i gi\u1eefa GV)','S\u1ef1 c\u1ed1 s\u1ee9c kh\u1ecfe / B\u1eadn vi\u1ec7c kh\u1ea9n c\u1ea5p \u0111\u1ed9t xu\u1ea5t']];
+  const reasonOptions=reasons.map(([v,label])=>`<option value="${esc(v)}">${esc(label)}</option>`).join('');
+  const tab=teachingEdit.tab||'teaching';
+  const tabButton=(key,label,icon,count)=>`<button type="button" class="sched-tab${tab===key?' active':''}" data-act="schedule-tab" data-tab="${key}" aria-selected="${tab===key}">${icon}<span>${label}</span>${count?`<i>${count}</i>`:''}</button>`;
+  openModal({title:'Th\u00eam l\u1ecbch \u00b7 '+l.name,wide:true,className:'schedule-editor-modal',body:`<p class="sched-intro">Qu\u1ea3n l\u00fd l\u1ecbch d\u1ea1y, l\u1ecbch b\u1eadn v\u00e0 l\u1ecbch tr\u1ef1c \u0111\u1ec1 c\u1ee7a gi\u1ea3ng vi\u00ean n\u00e0y.</p><nav class="sched-tabs" role="tablist">${tabButton('teaching','L\u1ecbch d\u1ea1y',IC.cal,items.length)}${tabButton('busy','L\u1ecbch b\u1eadn',IC.calendarOff,busy.length)}${tabButton('duty','Tr\u1ef1c \u0111\u1ec1',IC.clip,savedDuty.length+newDuty.length)}</nav>
+    <section class="panel sched-manual-section" ${tab!=='teaching'?'hidden':''}><div class="sched-manual-heading"><span class="sched-manual-icon teaching">${IC.cal}</span><div><b>L\u1ecbch d\u1ea1y</b><small>Gi\u00fap tr\u00e1nh ph\u00e2n c\u00f4ng coi thi tr\u00f9ng gi\u1edd</small></div></div><div class="sched-manual-list">${teachingRows}</div><div class="sched-manual-form"><label class="f"><span>Ng\u00e0y d\u1ea1y</span><input type="date" id="teachDate"></label><label class="f"><span>Ti\u1ebft \u0111\u1ea7u</span><input type="number" id="teachStart" min="1" max="12" value="1"></label><label class="f"><span>Ti\u1ebft cu\u1ed1i</span><input type="number" id="teachEnd" min="1" max="12" value="2"></label><button type="button" class="btn" data-act="add-teaching-row">Th\u00eam ca d\u1ea1y</button></div></section>
+    <section class="panel sched-manual-section" ${tab!=='busy'?'hidden':''}><div class="sched-manual-heading"><span class="sched-manual-icon busy">${IC.calendarOff}</span><div><b>L\u1ecbch b\u1eadn</b><small>Khai b\u00e1o kho\u1ea3ng ti\u1ebft v\u00e0 l\u00fd do b\u1eadn</small></div></div><div class="sched-manual-list">${busyRows}</div><div class="sched-manual-form sched-busy-form"><label class="f"><span>Ng\u00e0y b\u1eadn</span><input type="date" id="manualBusyDate"></label><label class="f"><span>Ti\u1ebft \u0111\u1ea7u</span><input type="number" id="manualBusyStart" min="1" max="12" value="1"></label><label class="f"><span>Ti\u1ebft cu\u1ed1i</span><input type="number" id="manualBusyEnd" min="1" max="12" value="12"></label><label class="f"><span>L\u00fd do</span><select id="manualBusyReason">${reasonOptions}</select></label><button type="button" class="btn" data-act="add-manual-busy">Th\u00eam l\u1ecbch b\u1eadn</button></div></section>
+    <section class="panel sched-manual-section" ${tab!=='duty'?'hidden':''}><div class="sched-manual-heading"><span class="sched-manual-icon duty">${IC.clip}</span><div><b>L\u1ecbch tr\u1ef1c \u0111\u1ec1 th\u1ee7 c\u00f4ng</b><small>Gi\u1ea3ng vi\u00ean \u0111ang ch\u1ecdn s\u1ebd \u0111\u01b0\u1ee3c g\u00e1n tr\u1ef1c \u0111\u1ec1</small></div></div><div class="sched-manual-list">${dutyList}</div><div class="sched-manual-form sched-duty-form"><label class="f"><span>M\u00e3 h\u1ecdc ph\u1ea7n</span><input type="text" id="manualDutyCode" maxlength="30" placeholder="V\u00ed d\u1ee5: 0101101931"></label><label class="f sched-duty-course"><span>M\u00f4n thi</span><input type="text" id="manualDutyCourse" maxlength="300" placeholder="T\u00ean m\u00f4n thi"></label><label class="f"><span>Ng\u00e0y thi</span><input type="date" id="manualDutyDate"></label><label class="f"><span>Ti\u1ebft \u0111\u1ea7u</span><input type="number" id="manualDutyStart" min="1" max="16" value="1"></label><label class="f"><span>Ti\u1ebft cu\u1ed1i</span><input type="number" id="manualDutyEnd" min="1" max="16" value="2"></label><button type="button" class="btn" data-act="add-manual-duty">Th\u00eam tr\u1ef1c \u0111\u1ec1</button></div><p class="hint sched-manual-hint">\u0110\u1ee3t \u0111ang l\u01b0u: ${esc(window.__MA_DOT||'Ch\u01b0a c\u00f3 \u0111\u1ee3t thi')}. H\u1ecdc ph\u1ea7n, ng\u00e0y v\u00e0 ti\u1ebft \u0111\u01b0\u1ee3c l\u01b0u ri\u00eang kh\u1ecfi ph\u00e2n c\u00f4ng coi thi.</p></section><div class="err" id="teachErr" role="alert">${esc(teachingEdit.error||'')}</div>`,foot:'<button class="btn" data-act="close-schedule-editor">H\u1ee7y</button><button class="btn pri" data-act="save-teaching-schedule" data-id="'+esc(l.id)+'">L\u01b0u thay \u0111\u1ed5i</button>'});
 }
 const A={
   login(){
@@ -485,36 +495,62 @@ const A={
     openModal({title:'Đặt định mức chung',body:'<p class="muted" style="margin-bottom:10px">Chỉ cập nhật định mức cho '+scope+' ('+eligible.length+' người). Không thêm giảng viên ngoài danh sách tham gia.</p><label class="f"><span>Định mức (%)</span><input type="number" id="qa" min="0" max="100" value="100"></label>',foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="do-quota-all"'+(eligible.length?'':' disabled')+'>Áp dụng</button>'})
   },
   async 'do-quota-all'(){const q=parseInt($('#qa').value,10);if(isNaN(q)||q<0||q>100)return;try{const dot=window.__MA_DOT;if(!dot){toast('Chưa có đợt thi để lưu định mức.');return}let maKhoa=null;if(F.ld)maKhoa=await API.resolveKhoa(F.ld);const r=await API.setCommonQuota(dot,q,maKhoa);closeModal();await refreshLecturers(false);render();toast('Đã áp dụng '+q+'% cho '+(r.GiangVienCapNhat||0)+' giảng viên tham gia. Tổng định mức: '+r.TongDinhMuc+'/'+r.TongNhuCau+' ca.')}catch(e){toast(e.message)}},
-  'teaching-schedule'(t){
+  async 'teaching-schedule'(t){
     const l=lec(t.dataset.id);if(!l)return;
-    teachingEdit={id:l.id,items:(l.teach||[]).map(teachingEntry).sort((a,b)=>a.date.localeCompare(b.date)||a.start-b.start||a.end-b.end)};
+    const fallbackBusy=(l.busy||[]).map(x=>({date:x.date||String(x.key||'').split('|')[0],start:Number(x.start)|| (String(x.key||'').endsWith('|S')?1:7),end:Number(x.end)||(String(x.key||'').endsWith('|S')?6:12),reason:x.reason||null}));
+    teachingEdit={id:l.id,items:(l.teach||[]).map(teachingEntry).sort((a,b)=>a.date.localeCompare(b.date)||a.start-b.start||a.end-b.end),busy:fallbackBusy,savedDuty:[],newDuty:[],error:''};
+    try{
+      const dot=window.__MA_DOT;
+      const [teachData,busyData,dutyData]=await Promise.all([API.teaching(l.id),API.busy(l.id),dot?API.dutyAssignments(dot):Promise.resolve({items:[]})]);
+      if(!teachingEdit||String(teachingEdit.id)!==String(l.id))return;
+      teachingEdit.items=(teachData.items||[]).map(teachingEntry).sort((a,b)=>a.date.localeCompare(b.date)||a.start-b.start||a.end-b.end);
+      teachingEdit.busy=(busyData.items||[]).map(x=>({date:String(x.NgayBan).slice(0,10),start:Number(x.TuTiet)||1,end:Number(x.DenTiet)||12,reason:x.LyDo||null}));
+      teachingEdit.savedDuty=(dutyData.items||[]).filter(x=>String(x.MaGV)===String(l.id));
+    }catch(e){if(teachingEdit)teachingEdit.error='\u0141\u1ed7i t\u1ea3i l\u1ecbch hi\u1ec7n c\u00f3: '+(e.message||String(e))}
     renderTeachingEditor();
   },
+  'schedule-tab'(t){if(!teachingEdit)return;teachingEdit.tab=t.dataset.tab;renderTeachingEditor()},
   'add-teaching-row'(){
     if(!teachingEdit)return;
-    const date=$('#teachDate').value,start=Number($('#teachStart').value),end=Number($('#teachEnd').value),er=$('#teachErr');
-    er.textContent='';
-    if(!date){er.textContent='Hãy chọn ngày dạy.';return}
-    if(!Number.isInteger(start)||!Number.isInteger(end)||start<1||end>12||start>end){er.textContent='Tiết bắt đầu và kết thúc phải nằm trong khoảng 1–12, và tiết bắt đầu không sau tiết kết thúc.';return}
-    if(teachingEdit.items.some(x=>x.date===date&&x.start===start&&x.end===end)){er.textContent='Lịch dạy này đã có trong danh sách.';return}
-    teachingEdit.items.push({date,start,end,source:null,note:null});
-    teachingEdit.items.sort((a,b)=>a.date.localeCompare(b.date)||a.start-b.start||a.end-b.end);
-    renderTeachingEditor();
+    const date=$('#teachDate').value,start=Number($('#teachStart').value),end=Number($('#teachEnd').value),er=$('#teachErr');if(er)er.textContent='';
+    if(!date){if(er)er.textContent='H\u00e3y ch\u1ecdn ng\u00e0y d\u1ea1y.';return}
+    if(!Number.isInteger(start)||!Number.isInteger(end)||start<1||end>12||start>end){if(er)er.textContent='Ti\u1ebft d\u1ea1y ph\u1ea3i n\u1eb1m trong kho\u1ea3ng 1\u201312.';return}
+    if(teachingEdit.items.some(x=>x.date===date&&x.start===start&&x.end===end)){if(er)er.textContent='Ca d\u1ea1y n\u00e0y \u0111\u00e3 c\u00f3 trong danh s\u00e1ch.';return}
+    teachingEdit.items.push({date,start,end,source:null,note:null});teachingEdit.items.sort((a,b)=>a.date.localeCompare(b.date)||a.start-b.start||a.end-b.end);teachingEdit.tab='teaching';renderTeachingEditor();
   },
-  'remove-teaching-row'(t){
+  'remove-teaching-row'(t){if(!teachingEdit)return;teachingEdit.items.splice(Number(t.dataset.index),1);renderTeachingEditor()},
+  'add-manual-busy'(){
     if(!teachingEdit)return;
-    teachingEdit.items.splice(Number(t.dataset.index),1);
-    renderTeachingEditor();
+    const date=$('#manualBusyDate').value,start=Number($('#manualBusyStart').value),end=Number($('#manualBusyEnd').value),reason=$('#manualBusyReason').value||null,er=$('#teachErr');if(er)er.textContent='';
+    if(!date){if(er)er.textContent='H\u00e3y ch\u1ecdn ng\u00e0y b\u1eadn.';return}
+    if(!Number.isInteger(start)||!Number.isInteger(end)||start<1||end>12||start>end){if(er)er.textContent='Ti\u1ebft b\u1eadn ph\u1ea3i n\u1eb1m trong kho\u1ea3ng 1\u201312.';return}
+    if(teachingEdit.busy.some(x=>x.date===date&&x.start===start&&x.end===end)){if(er)er.textContent='Kho\u1ea3ng b\u1eadn n\u00e0y \u0111\u00e3 c\u00f3 trong danh s\u00e1ch.';return}
+    teachingEdit.busy.push({date,start,end,reason});teachingEdit.busy.sort((a,b)=>a.date.localeCompare(b.date)||a.start-b.start);teachingEdit.tab='busy';renderTeachingEditor();
   },
+  'remove-manual-busy'(t){if(!teachingEdit)return;teachingEdit.busy.splice(Number(t.dataset.index),1);renderTeachingEditor()},
+  'add-manual-duty'(){
+    if(!teachingEdit)return;
+    const l=lec(teachingEdit.id),code=$('#manualDutyCode').value.trim(),course=$('#manualDutyCourse').value.trim(),date=$('#manualDutyDate').value,start=Number($('#manualDutyStart').value),end=Number($('#manualDutyEnd').value),er=$('#teachErr');if(er)er.textContent='';
+    if(!window.__MA_DOT){if(er)er.textContent='T\u1ea1o ho\u1eb7c ch\u1ecdn \u0111\u1ee3t thi tr\u01b0\u1edbc khi th\u00eam l\u1ecbch tr\u1ef1c \u0111\u1ec1.';return}
+    if(!code||!course||!date){if(er)er.textContent='Nh\u1eadp m\u00e3 h\u1ecdc ph\u1ea7n, m\u00f4n thi v\u00e0 ng\u00e0y thi.';return}
+    if(!Number.isInteger(start)||!Number.isInteger(end)||start<1||end>16||start>end){if(er)er.textContent='Ti\u1ebft thi ph\u1ea3i n\u1eb1m trong kho\u1ea3ng 1\u201316.';return}
+    const duplicate=[...(teachingEdit.savedDuty||[]),...(teachingEdit.newDuty||[])].some(x=>String(x.MaHP||x.ma_hp).toLowerCase()===code.toLowerCase()&&String(x.NgayThi||x.ngay_thi).slice(0,10)===date&&Number(x.TuTiet??x.tu_tiet)===start&&Number(x.DenTiet??x.den_tiet)===end&&String(x.MaGV||x.ma_gv)===String(l.id));
+    if(duplicate){if(er)er.textContent='L\u1ecbch tr\u1ef1c \u0111\u1ec1 n\u00e0y \u0111\u00e3 c\u00f3 trong danh s\u00e1ch.';return}
+    teachingEdit.newDuty.push({ma_hp:code,mon_thi:course,ngay_thi:date,tu_tiet:start,den_tiet:end,ma_gv:String(l.id),so_dien_thoai:null,ghi_chu:null});teachingEdit.tab='duty';renderTeachingEditor();
+  },
+  'remove-manual-duty'(t){if(!teachingEdit)return;teachingEdit.newDuty.splice(Number(t.dataset.index),1);renderTeachingEditor()},
+  'close-schedule-editor'(){teachingEdit=null;closeModal()},
   async 'save-teaching-schedule'(t){
     if(!teachingEdit)return;
-    const l=lec(teachingEdit.id);if(!l)return;
-    const items=teachingEdit.items.map(x=>({ngay_day:x.date,tu_tiet:x.start,den_tiet:x.end,nguon_file:x.source??null,ghi_chu:x.note??null}));
-    const label=t.textContent;t.disabled=true;t.textContent='Đang lưu…';
+    const edit=teachingEdit,l=lec(edit.id);if(!l)return;
+    const items=edit.items.map(x=>({ngay_day:x.date,tu_tiet:x.start,den_tiet:x.end,nguon_file:x.source??null,ghi_chu:x.note??null}));
+    const busy=edit.busy.map(x=>({ngay_ban:x.date,tu_tiet:x.start,den_tiet:x.end,ly_do:x.reason||null}));
+    const label=t.textContent;t.disabled=true;t.textContent='\u0110ang l\u01b0u\u2026';
     try{
-      await API.replaceTeaching(l.id,items);
-      teachingEdit=null;await refreshLecturers(false);closeModal();render();toast('Đã lưu lịch dạy. Lịch bận không thay đổi.');
-    }catch(e){t.disabled=false;t.textContent=label;const er=$('#teachErr');if(er)er.textContent=e.message}
+      await API.replaceTeaching(l.id,items);await API.replaceBusy(l.id,busy);
+      if(edit.newDuty.length)await API.importDuty(window.__MA_DOT,edit.newDuty,'Nhap truc de thu cong');
+      teachingEdit=null;await refreshLecturers(false);closeModal();render();toast('L\u01b0u thay \u0111\u1ed5i l\u1ecbch d\u1ea1y, l\u1ecbch b\u1eadn v\u00e0 tr\u1ef1c \u0111\u1ec1 th\u00e0nh c\u00f4ng.');
+    }catch(e){t.disabled=false;t.textContent=label;const er=$('#teachErr');if(er)er.textContent=e.message||'Kh\u00f4ng l\u01b0u \u0111\u01b0\u1ee3c l\u1ecbch.'}
   },
   'clear-schedule'(t){
     const l=lec(t.dataset.id);if(!l)return;
@@ -613,6 +649,20 @@ const A={
   },
 
   'pick-busy-file'(){$('#fileBusy').click()},
+  'pick-duty-file'(){const i=document.createElement('input');i.type='file';i.accept='.xlsx,.xls';i.dataset.chg='duty-file';i.hidden=true;document.body.appendChild(i);i.click()},
+  async 'apply-duty'(){
+    if(!pendDuty||!pendDuty.rows.length||!pendDuty.ma_dot){toast('Chưa có lượt trực hợp lệ hoặc chưa chọn được đợt thi.');return}
+    try{
+      const result=await API.importDuty(pendDuty.ma_dot,pendDuty.rows,pendDuty.name);
+      const added=Number(result.inserted)||0,updated=Number(result.updated)||0,dot=pendDuty.ma_dot;pendDuty=null;closeModal();
+      let saved=[];try{const data=await API.dutyAssignments(dot);saved=data.items||[]}catch(e){}
+      const dutyCounts=new Map();saved.forEach(x=>dutyCounts.set(String(x.MaGV),(dutyCounts.get(String(x.MaGV))||0)+1));
+      S.lecs.forEach(l=>{l.dutyCount=dutyCounts.get(String(l.id))||0});save();render();
+      const rows=saved.slice(0,50).map(x=>'<tr><td>'+esc(fmtD(String(x.NgayThi).slice(0,10)))+'</td><td>'+esc(x.TuTiet+' → '+x.DenTiet)+'</td><td><b>'+esc(x.MaHP)+'</b><small style="display:block;color:var(--muted)">'+esc(x.MonThi)+'</small></td><td>'+esc(x.HoTen)+' <small class="muted">'+esc(x.MaGV)+'</small></td></tr>').join('');
+      openModal({title:'Đã lưu lịch trực đề',wide:true,body:'<div style="padding:12px 14px;margin-bottom:14px;border-radius:9px;background:var(--okbg);color:var(--ok)">Đã lưu '+added+' lượt mới và cập nhật '+updated+' lượt trong đợt '+esc(dot)+'.</div>'+(saved.length?'<div class="tools"><span class="chip">'+saved.length+' lượt đang lưu trong đợt</span></div><div class="tw" style="max-height:48vh;overflow:auto"><table><thead><tr><th>Ngày thi</th><th>Tiết</th><th>Mã HP / Môn thi</th><th>Giảng viên</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+(saved.length>50?'<p class="hint">Đang hiển thị 50 lượt đầu.</p>':''):'<p class="hint">Dữ liệu đã được gửi tới database. Không tải lại được danh sách vừa lưu.</p>'),foot:'<button class="btn pri" data-act="close">Hoàn tất</button>'});
+    }catch(e){toast(e.message||'Không lưu được lịch trực đề vào database.')}
+  },
+  'cancel-duty'(){pendDuty=null;closeModal()},
   async 'apply-busy'(){
     if(!pendBusy)return;
     try{

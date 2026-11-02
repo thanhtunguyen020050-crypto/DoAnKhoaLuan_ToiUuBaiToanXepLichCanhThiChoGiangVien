@@ -46,7 +46,7 @@ function readTable(f){return new Promise((res,rej)=>{
   r.onerror=()=>rej(new Error('Không đọc được file.'));
   if(/\.xlsx?$/i.test(f.name)){
     if(typeof XLSX==='undefined'){rej(new Error('Chưa tải được thư viện đọc Excel. Hãy lưu file dạng CSV rồi thử lại.'));return}
-    r.onload=()=>{try{const wb=XLSX.read(r.result,{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];res(XLSX.utils.sheet_to_json(ws,{header:1,raw:false,dateNF:'dd/mm/yyyy',blankrows:false}))}catch(e){rej(new Error('File Excel không hợp lệ.'))}};
+    r.onload=()=>{try{const wb=XLSX.read(r.result,{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]],data=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,dateNF:'dd/mm/yyyy',blankrows:false});res(data.map(row=>Array.from(row||[],cell=>cell==null?'':cell)))}catch(e){rej(new Error('File Excel không hợp lệ.'))}};
     r.readAsArrayBuffer(f);
   }else{
     r.onload=()=>{const t=String(r.result).replace(/^\uFEFF/,'');const lines=t.split(/\r?\n/).filter(x=>x.trim());const sep=t.indexOf('\t')>=0?'\t':(t.indexOf(';')>=0?';':',');res(lines.map(l=>l.split(sep).map(x=>x.trim().replace(/^"|"$/g,''))))};
@@ -73,7 +73,7 @@ function parseDate(v){
   return null;
 }
 function plain(v){return String(v==null?'':v).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/đ/g,'d').replace(/[\u00a0\u200b\ufeff]/g,' ').replace(/\s+/g,' ').trim()}
-function parsePeriod(v){const m=String(v||'').match(/(\d{1,2})\s*[→>-]\s*(\d{1,2})/);return m&&+m[1]<+m[2]&&+m[1]>=1&&+m[2]<=12?{start:+m[1],end:+m[2],key:+m[1]+'-'+(+m[2])}:null}
+function parsePeriod(v){const m=String(v||'').match(/(\d{1,2})\s*(?:->|\u2192|\u279c|\u2013|\u2014|-)\s*(\d{1,2})/);return m&&+m[1]<+m[2]&&+m[1]>=1&&+m[2]<=12?{start:+m[1],end:+m[2],key:+m[1]+'-'+(+m[2])}:null}
 function parseExamSlot(v){const r=parsePeriod(v);if(r){const x=EXAM_SLOTS.find(s=>s[1]===r.start&&s[2]===r.end);return{start:r.start,end:r.end,label:x?x[0]:r.start+' → '+r.end}}const m=plain(v).match(/(?:ca\s*)?([1-4])(?:\D|$)/);if(!m)return null;const x=EXAM_SLOTS[[0,2,5,7][+m[1]-1]];return{start:x[1],end:x[2],label:x[0]}}
 function teachName(rows,key){const r=rows.find(x=>x.name.trim().toLocaleLowerCase('vi')===key);return r?r.name:key}
 

@@ -1,5 +1,30 @@
 /* ========= Thay đổi input ========= */
 const C={
+  'duty-file'(t){
+    const f=t.files&&t.files[0];if(!f)return;
+    readTable(f).then(rows=>{
+      const norm=rows.map(r=>(r||[]).map(plain));
+      const hi=norm.findIndex(r=>r.some(x=>x==='stt')&&r.some(x=>x.includes('ma hp'))&&r.some(x=>x.includes('ngay thi'))&&r.some(x=>x.includes('gv truc de')));
+      if(hi<0){toast('Không tìm thấy bảng có các cột STT, Mã HP, Ngày thi và GV trực đề.');return}
+      const hdr=norm[hi],col=k=>hdr.findIndex(x=>x.includes(k)),ix={id:col('stt'),code:col('ma hp'),course:col('mon thi'),weekday:col('thu'),date:col('ngay thi'),period:col('tiet'),teacher:col('gv truc de'),phone:col('so dien thoai'),note:col('ghi chu')};
+      let title='',periodLabel='',dept='',last={};
+      for(let i=0;i<hi;i++){const s=(rows[i]||[]).filter(Boolean).join(' '),n=plain(s);if(n.includes('phan cong'))title=s.replace(/\s+/g,' ').trim();if(n.includes('tu ngay'))periodLabel=s.replace(/\s+/g,' ').trim();if(/Khoa:/i.test(s))dept=s.replace(/^.*?Khoa:\s*/i,'').trim()}
+      const records=[];
+      for(let i=hi+1;i<rows.length;i++){
+        const r=rows[i]||[],v=k=>String(r[ix[k]]??'').trim();if(!r.some(x=>String(x??'').trim()))continue;
+        const teacher=v('teacher'),teacherPlain=plain(teacher);if(/^(tp\.?\s*hcm|nguoi lap bieu|truong khoa)\b/.test(teacherPlain))break;
+        last={id:v('id')||last.id||'',code:v('code')||last.code||'',course:v('course')||last.course||'',weekday:v('weekday')||last.weekday||'',date:v('date')||last.date||'',period:v('period')||last.period||''};
+        if(!teacher)continue;const d=parseDate(last.date),p=parsePeriod(last.period),note=v('note'),maCode=(note.match(/ma\s*gv\s*:\s*([a-z0-9_-]+)/i)||[])[1],lecturer=(maCode&&S.lecs.find(x=>String(x.id).toLowerCase()===maCode.toLowerCase()))||S.lecs.find(x=>plain(x.name)===plain(teacher));
+        records.push({line:i+1,id:last.id,code:last.code,course:last.course,weekday:last.weekday,date:d,period:p?last.period:'',teacher,ma_gv:lecturer?String(lecturer.id):'',start:p&&p.start,end:p&&p.end,phone:v('phone'),note:note.replace(/^ma\s*gv\s*:\s*[\w-]+\s*/i,'').trim(),error:!d?'Ngày thi không hợp lệ':!p?'Tiết không hợp lệ':''});
+      }
+      if(!records.length){toast('Không tìm thấy lượt giảng viên trực đề hợp lệ trong file.');return}
+      const groups=new Map();records.forEach(x=>{const k=[x.code,x.date,x.period].join('|');if(!groups.has(k))groups.set(k,{...x,teachers:[]});groups.get(k).teachers.push(x.teacher)});
+      const courses=[...groups.values()],unmatched=[...new Set(records.filter(x=>!x.ma_gv).map(x=>x.teacher))],issueCount=records.filter(x=>x.error).length,maDot=window.__MA_DOT||''; pendDuty={name:f.name,ma_dot:maDot,rows:records.filter(x=>!x.error&&x.ma_gv).map(x=>({ma_hp:x.code,mon_thi:x.course,ngay_thi:x.date,tu_tiet:x.start,den_tiet:x.end,ma_gv:x.ma_gv,so_dien_thoai:x.phone||null,ghi_chu:x.note||null}))};
+      const rowsHtml=courses.map(x=>'<tr><td>'+esc(fmtD(x.date||''))+'</td><td>'+esc(x.period)+'</td><td><b>'+esc(x.code)+'</b><small style="display:block;color:var(--muted);max-width:330px;white-space:normal">'+esc(x.course)+'</small></td><td>'+x.teachers.map(n=>'<span class="chip">'+esc(n)+'</span>').join(' ')+'</td></tr>').join('');
+      const importDisabled=issueCount||unmatched.length||!maDot||!pendDuty.rows.length;
+      openModal({title:'Xem tr\u01b0\u1edbc import l\u1ecbch tr\u1ef1c \u0111\u1ec1',wide:true,body:'<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px"><span class="chip ok">'+courses.length+' ca thi</span><span class="chip">'+records.length+' l\u01b0\u1ee3t tr\u1ef1c</span><span class="chip">'+new Set(records.map(x=>x.teacher)).size+' gi\u1ea3ng vi\u00ean</span></div><section class="panel" style="padding:14px 16px;margin-bottom:14px"><b>'+esc(title||f.name)+'</b><div class="muted" style="margin-top:6px">'+esc(periodLabel)+' \u00b7 '+esc(dept||'Ch\u01b0a ghi khoa')+'</div><div class="muted" style="margin-top:4px;font-size:12px">T\u1ec7p: '+esc(f.name)+'</div><div class="muted" style="margin-top:4px;font-size:12px">\u0110\u1ee3t l\u01b0u: '+esc(maDot||'Ch\u01b0a ch\u1ecdn \u0111\u1ee3t thi')+'</div></section>'+(unmatched.length?'<div style="padding:11px 13px;margin-bottom:14px;border-radius:9px;background:var(--warnbg);color:var(--warn);font-size:13px"><b>'+unmatched.length+' t\u00ean ch\u01b0a kh\u1edbp gi\u1ea3ng vi\u00ean:</b> '+unmatched.map(esc).join(', ')+'.</div>':'<div style="padding:11px 13px;margin-bottom:14px;border-radius:9px;background:var(--okbg);color:var(--ok);font-size:13px">T\u1ea5t c\u1ea3 gi\u1ea3ng vi\u00ean trong file \u0111\u1ec1u kh\u1edbp danh s\u00e1ch h\u1ec7 th\u1ed1ng.</div>')+(issueCount?'<div class="err">'+records.filter(x=>x.error).map(x=>'D\u00f2ng '+x.line+': '+esc(x.error)).join('<br>')+'</div>':'')+'<div class="tw" style="max-height:48vh;overflow:auto"><table><thead><tr><th>Ng\u00e0y thi</th><th>Ti\u1ebft</th><th>M\u00e3 HP / M\u00f4n thi</th><th>Gi\u1ea3ng vi\u00ean tr\u1ef1c</th></tr></thead><tbody>'+rowsHtml+'</tbody></table></div><p class="hint" style="margin-top:10px">Khi x\u00e1c nh\u1eadn, c\u00e1c l\u01b0\u1ee3t tr\u1ef1c s\u1ebd \u0111\u01b0\u1ee3c l\u01b0u ri\u00eang trong database. Import l\u1ea1i c\u00f9ng file s\u1ebd c\u1eadp nh\u1eadt c\u00e1c d\u00f2ng tr\u00f9ng.</p>',foot:'<button class="btn" data-act="cancel-duty">H\u1ee7y</button><button class="btn pri" data-act="apply-duty"'+(importDisabled?' disabled':'')+'>L\u01b0u '+pendDuty.rows.length+' l\u01b0\u1ee3t tr\u1ef1c \u0111\u1ec1</button>'});
+    }).catch(e=>toast(e.message||'Không đọc được file Excel.')).finally(()=>t.remove());
+  },
   role(t){const u=S.users.find(x=>x.id===+t.dataset.id);u.role=t.value;if(cur&&cur.id===u.id)cur=u;render()},
   active(t){S.users.find(x=>x.id===+t.dataset.id).on=t.checked;save()},
   'busy-filter'(t){busyReqFilter=t.value;A['load-busy-requests']();},
@@ -126,13 +151,16 @@ const C={
       }
       let ix={date:0,slot:1,need:2,kind:3},header=-1;
       for(let i=0;i<Math.min(rows.length,12);i++){
-        const cells=(rows[i]||[]).map(plain),find=fn=>cells.findIndex(fn);
+        // SheetJS can return sparse rows or explicit undefined values for empty Excel cells.
+        const cells=Array.from(rows[i]||[],v=>plain(v)),find=fn=>cells.findIndex(v=>fn(String(v??'')));
         const d=find(x=>x.includes('ngay')),s=find(x=>x.includes('ca')||x.includes('tiet')||x.includes('slot')),n=find(x=>x.includes('can')||x.includes('so gv')||x.includes('giang vien')),k=find(x=>x.includes('loai'));
-        if(d>=0&&s>=0&&n>=0&&k>=0){ix={date:d,slot:s,need:n,kind:k};header=i;break}
+        // File phân công dự kiến có thể chỉ gồm Ngày thi, Tiết và Số GV cần cấp.
+        // Khi không có cột Loại ca, dùng LT để vẫn đưa được lịch vào luồng xếp lịch.
+        if(d>=0&&s>=0&&n>=0){ix={date:d,slot:s,need:n,kind:k};header=i;break}
       }
       rows.forEach((r,i)=>{
         if(i<=header||!r||!r.some(x=>String(x||'').trim()))return;
-        const date=parseDate(r[ix.date]),slot=parseExamSlot(r[ix.slot]),need=parseInt(String(r[ix.need]||'').replace(/[^0-9]/g,''),10),raw=plain(r[ix.kind]);
+        const date=parseDate(r[ix.date]),slot=parseExamSlot(r[ix.slot]),need=parseInt(String(r[ix.need]||'').replace(/[^0-9]/g,''),10),raw=ix.kind>=0?plain(r[ix.kind]):'lt';
         const kind=raw==='lt'||raw.includes('ly thuyet')?'LT':raw==='tl'||raw.includes('tu luan')?'TL':'';
         let m='';
         if(!date)m='Ngày thi không hợp lệ, cần dạng dd/mm/yyyy';else if(!slot)m='Ca/tiết không hợp lệ (ví dụ Ca 1 hoặc 1 → 2)';else if(!Number.isInteger(need)||need<1||need>30)m='Số giảng viên cần phải từ 1 đến 30';else if(!kind)m='Loại ca phải là Lý thuyết (LT) hoặc Tự luận (TL)';

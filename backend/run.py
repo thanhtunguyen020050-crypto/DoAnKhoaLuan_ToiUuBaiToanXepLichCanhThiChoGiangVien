@@ -1,5 +1,10 @@
 """Chạy API bằng cấu hình host/port trong file .env."""
 import uvicorn
+import sys
+from pathlib import Path
+
+# Keep `python run.py` working in environments that launch Python with safe-path mode.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 try:
     from .core.config import settings

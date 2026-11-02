@@ -11,7 +11,7 @@ async function refreshLecturers(showToast=true){
     const old=new Map(S.lecs.map(l=>[String(l.id),l]));
     S.lecs=items.map(x=>{
       const o=old.get(String(x.MaGV))||{};
-      return {id:x.MaGV,name:x.HoTen,dept:x.TenKhoa||x.TenBoMon||'Khoa CNTT',ma_bo_mon:x.MaBoMon,email:x.Email||'',pct:Number(x.TyLeDinhMuc??o.pct??0),quota:Number(x.SoCaQuyDinh??o.quota??0),quota_authoritative:x.SoCaQuyDinh!=null,inDot:window.__MA_DOT?x.MaDot!=null:true,busy:o.busy||[],teach:o.teach||[]};
+      return {id:x.MaGV,name:x.HoTen,dept:x.TenKhoa||x.TenBoMon||'Khoa CNTT',ma_bo_mon:x.MaBoMon,email:x.Email||'',pct:Number(x.TyLeDinhMuc??o.pct??0),quota:Number(x.SoCaQuyDinh??o.quota??0),quota_authoritative:x.SoCaQuyDinh!=null,inDot:window.__MA_DOT?x.MaDot!=null:true,busy:o.busy||[],teach:o.teach||[],dutyCount:Number(o.dutyCount)||0};
     });
     for(const l of S.lecs){
       try{
@@ -20,9 +20,16 @@ async function refreshLecturers(showToast=true){
         l.busy=[];l.teach=[];
         br.forEach(x=>{
           const d=String(x.NgayBan).slice(0,10), block=Number(x.TuTiet)<=6?'S':'C';
-          l.busy.push({key:d+'|'+block,priority:Number(x.UuTien)||3,reason:x.LyDo||null});
+          l.busy.push({key:d+'|'+block,date:d,start:Number(x.TuTiet)||1,end:Number(x.DenTiet)||12,priority:Number(x.UuTien)||3,reason:x.LyDo||null});
         });
         tr.forEach(x=>{l.teach.push({date:String(x.NgayDay).slice(0,10),start:Number(x.TuTiet),end:Number(x.DenTiet),source:x.NguonFile??null,note:x.GhiChu??null})});
+      }catch(_){ }
+    }
+    if(window.__MA_DOT){
+      try{
+        const duty=await API.dutyAssignments(window.__MA_DOT),counts=new Map();
+        (duty.items||[]).forEach(x=>counts.set(String(x.MaGV),(counts.get(String(x.MaGV))||0)+1));
+        S.lecs.forEach(l=>{l.dutyCount=counts.get(String(l.id))||0});
       }catch(_){ }
     }
     save();render();

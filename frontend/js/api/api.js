@@ -110,6 +110,8 @@ window.API = (() => {
     async busy(id){return req('/lich-ban/'+encodeURIComponent(id))},
     async replaceBusy(id,items){return req('/lich-ban/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(items)})},
     async importBusy(rows,filename){return req('/lich-ban/import?filename='+encodeURIComponent(filename||''),{method:'POST',body:JSON.stringify(rows)})},
+    async importDuty(maDot,rows,filename){return req('/truc-de/import',{method:'POST',body:JSON.stringify({ma_dot:maDot,nguon_file:filename||'',assignments:rows})})},
+    async dutyAssignments(maDot){return req('/truc-de?ma_dot='+encodeURIComponent(maDot))},
     async clearAllTeaching(){return req('/lich-day/all',{method:'DELETE'})},
     async clearAllBusy(){return req('/lich-ban/all',{method:'DELETE'})}
   };

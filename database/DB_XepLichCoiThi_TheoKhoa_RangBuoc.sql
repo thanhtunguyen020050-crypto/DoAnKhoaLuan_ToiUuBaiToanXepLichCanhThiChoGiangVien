@@ -210,6 +210,33 @@ GO
 CREATE INDEX IX_PCT_GV ON PhanCongCoiThi(MaGV,MaCa);
 GO
 
+/* Imported exam-paper duty is stored separately from exam invigilation assignments. */
+IF OBJECT_ID(N'dbo.PhanCongTrucDe', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.PhanCongTrucDe (
+        ID BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_PhanCongTrucDe PRIMARY KEY,
+        MaDot VARCHAR(20) NOT NULL,
+        MaHP NVARCHAR(30) NOT NULL,
+        MonThi NVARCHAR(300) NOT NULL,
+        NgayThi DATE NOT NULL,
+        Thu NVARCHAR(20) NOT NULL,
+        TuTiet INT NOT NULL,
+        DenTiet INT NOT NULL,
+        MaGV VARCHAR(20) NOT NULL,
+        SoDienThoai NVARCHAR(30) NULL,
+        GhiChu NVARCHAR(255) NULL,
+        NguonFile NVARCHAR(255) NULL,
+        ThoiGianImport DATETIME2 NOT NULL CONSTRAINT DF_PhanCongTrucDe_Time DEFAULT SYSDATETIME(),
+        CONSTRAINT FK_PhanCongTrucDe_Dot FOREIGN KEY(MaDot) REFERENCES dbo.DotThi(MaDot) ON DELETE CASCADE,
+        CONSTRAINT FK_PhanCongTrucDe_GV FOREIGN KEY(MaGV) REFERENCES dbo.GiangVien(MaGV),
+        CONSTRAINT CK_PhanCongTrucDe_Tiet CHECK(TuTiet BETWEEN 1 AND 16 AND DenTiet BETWEEN TuTiet AND 16)
+    );
+END;
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name=N'UX_PhanCongTrucDe_ImportKey' AND object_id=OBJECT_ID(N'dbo.PhanCongTrucDe'))
+    CREATE UNIQUE INDEX UX_PhanCongTrucDe_ImportKey ON dbo.PhanCongTrucDe(MaDot,MaHP,NgayThi,TuTiet,DenTiet,MaGV);
+GO
+
 
 /* 02. Ham va thu tuc nghiep vu: tinh dinh muc, CRUD danh muc, dot thi, ca thi, lich day va lich ban. */
 CREATE OR ALTER FUNCTION dbo.fn_GiaoTiet(@Tu1 INT,@Den1 INT,@Tu2 INT,@Den2 INT)
@@ -1270,4 +1297,5 @@ ALTER TABLE dbo.YeuCauBaoBan
     ADD CONSTRAINT CK_YCBB_TrangThai
     CHECK (TrangThai IN ('PENDING','APPROVED','REJECTED','WITHDRAWN'));
 GO
+
 
