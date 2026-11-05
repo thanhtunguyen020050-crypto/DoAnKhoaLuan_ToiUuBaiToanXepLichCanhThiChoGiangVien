@@ -110,7 +110,7 @@ const A={
     }catch(e){error.textContent=e.message||'Không thể cấp mật khẩu tạm.'}
   },
   close(){closeModal()},
-  ovclose(t,e){if(e.target===t)closeModal()},
+  ovclose(t,e){const close=e.target===t&&modalBackdropMouseDown===t;modalBackdropMouseDown=null;if(close)closeModal()},
   async 'load-busy-requests'(){
     busyReqsLoading=true;busyReqsError='';render();
     try{
@@ -554,7 +554,7 @@ const A={
   },
   'clear-schedule'(t){
     const l=lec(t.dataset.id);if(!l)return;
-    const hasTeach=!!(l.teach&&l.teach.length),hasBusy=!!(l.busy&&l.busy.length);
+    const hasTeach=!!(l.teach&&l.teach.length),hasBusy=!!(l.busy&&l.busy.length),hasDuty=Number(l.dutyCount)>0;
     const icoBook='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>';
     const icoBan='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>';
     const cardStyle=(active,enabled)=>'display:flex;align-items:center;gap:14px;padding:14px 16px;border-radius:10px;border:2px solid '+(active&&enabled?'var(--bad)':'var(--line)')+';background:'+(active&&enabled?'var(--badbg)':'var(--card)')+';cursor:'+(enabled?'pointer':'not-allowed')+';opacity:'+(enabled?'1':'0.4')+';transition:border-color .15s,background .15s;user-select:none';
@@ -570,13 +570,19 @@ const A={
       +'<span style="display:block;font-size:12.5px;color:var(--muted);margin-top:1px">'+(hasBusy?'<b style="color:var(--bad)">'+l.busy.length+' buổi bận</b> sẽ bị xóa':'Chưa có lịch bận để xóa')+'</span></span>'
       +'<input type="checkbox" id="clrBusy" style="width:18px;height:18px;accent-color:var(--bad);flex:none"'+(hasBusy?' checked':' disabled')+'>'
       +'</label>';
+    const cardDuty='<label style="'+cardStyle(hasDuty,hasDuty)+'" id="cardDuty">'
+      +'<span style="flex:none;width:40px;height:40px;border-radius:9px;background:'+(hasDuty?'var(--badbg)':'var(--sky)')+';color:'+(hasDuty?'var(--bad)':'var(--muted)')+';display:flex;align-items:center;justify-content:center">'+IC.clip+'</span>'
+      +'<span style="flex:1;min-width:0"><span style="display:block;font-weight:600;font-size:14px">Lịch trực đề</span>'
+      +'<span style="display:block;font-size:12.5px;color:var(--muted);margin-top:1px">'+(hasDuty?'<b style="color:var(--bad)">'+Number(l.dutyCount)+' lượt trực đề</b> sẽ bị xóa':'Chưa có lịch trực đề trong đợt này')+'</span></span>'
+      +'<input type="checkbox" id="clrDuty" style="width:18px;height:18px;accent-color:var(--bad);flex:none"'+(hasDuty?' checked':' disabled')+'>'
+      +'</label>';
     const warn='<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:var(--warnbg);color:var(--warn);font-size:13px;margin-top:14px">'
       +'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
       +'<span>Dữ liệu bị xóa <b>không thể khôi phục</b>. Hãy chắc chắn trước khi xác nhận.</span></div>';
     openModal({
       title:'Xóa lịch của '+esc(l.name),
       body:'<p style="color:var(--muted);font-size:13.5px;margin-bottom:14px">Chọn loại lịch cần xóa:</p>'
-        +'<div style="display:flex;flex-direction:column;gap:10px">'+cardTeach+cardBusy+'</div>'
+        +'<div style="display:flex;flex-direction:column;gap:10px">'+cardTeach+cardBusy+cardDuty+'</div>'
         +warn
         +'<div class="err" id="clrErr" style="margin-top:10px"></div>',
       foot:'<button class="btn" data-act="close">Hủy</button>'
@@ -589,12 +595,16 @@ const A={
     const l=lec(t.dataset.id);if(!l)return;
     const doTeach=$('#clrTeach')&&$('#clrTeach').checked;
     const doBusy=$('#clrBusy')&&$('#clrBusy').checked;
-    if(!doTeach&&!doBusy){const er=$('#clrErr');if(er)er.textContent='Vui lòng chọn ít nhất một loại lịch để xóa.';return}
-    const what=(doTeach&&doBusy)?'lịch dạy và lịch bận':doTeach?'lịch dạy':'lịch bận';
+    const doDuty=$('#clrDuty')&&$('#clrDuty').checked;
+    if(!doTeach&&!doBusy&&!doDuty){const er=$('#clrErr');if(er)er.textContent='Vui lòng chọn ít nhất một loại lịch để xóa.';return}
+    const dot=window.__MA_DOT;
+    if(doDuty&&!dot){const er=$('#clrErr');if(er)er.textContent='Chưa chọn được đợt thi để xóa lịch trực đề.';return}
+    const what=[doTeach?'lịch dạy':'',doBusy?'lịch bận':'',doDuty?'lịch trực đề':''].filter(Boolean).join(', ');
     try{
       const errs=[];
       if(doTeach){try{await API.replaceTeaching(l.id,[])}catch(e){errs.push('Lịch dạy: '+e.message)}}
       if(doBusy){try{await API.replaceBusy(l.id,[])}catch(e){errs.push('Lịch bận: '+e.message)}}
+      if(doDuty){try{await API.clearLecturerDuty(dot,l.id)}catch(e){errs.push('Lịch trực đề: '+e.message)}}
       await refreshLecturers(false);closeModal();render();
       if(errs.length)toast('Xóa một phần. Lỗi: '+errs.join('; '));
       else toast('Đã xóa '+what+' của '+l.name+'.');
@@ -648,6 +658,19 @@ const A={
     }catch(e){const er=$('#clearAllBusyErr');if(er)er.textContent=e.message||'Không xóa được lịch bận.'}
   },
 
+  async 'clear-all-duty'(){
+    const dot=window.__MA_DOT;
+    if(!dot){toast('Chưa có đợt thi hiện tại để xóa lịch trực đề.');return}
+    const total=S.lecs.reduce((n,l)=>n+(Number(l.dutyCount)||0),0);
+    if(!total){toast('Đợt thi hiện tại không có lịch trực đề nào để xóa.');return}
+    if(!confirm('Xóa toàn bộ '+total+' lượt trực đề của đợt '+dot+'? Lịch của các đợt khác sẽ được giữ nguyên.'))return;
+    try{
+      const r=await API.clearAllDuty(dot);
+      await refreshLecturers(false);render();
+      toast('Đã xóa '+r.deleted+' lượt trực đề của đợt '+dot+'.');
+    }catch(e){toast(e.message||'Không xóa được lịch trực đề.')}
+  },
+
   'pick-busy-file'(){$('#fileBusy').click()},
   'pick-duty-file'(){const i=document.createElement('input');i.type='file';i.accept='.xlsx,.xls';i.dataset.chg='duty-file';i.hidden=true;document.body.appendChild(i);i.click()},
   async 'apply-duty'(){
@@ -697,7 +720,8 @@ const A={
     if(!date){er.textContent='Hãy chọn ngày thi.';return}if(!slot){er.textContent='Tiết/ca không hợp lệ.';return}if(isNaN(need)||need<1||need>30){er.textContent='Số giảng viên cần từ 1 đến 30.';return}
     if(old&&need<old.asg.length){er.textContent='Số giảng viên cần không thể thấp hơn số người đã được phân công.';return}
     try{
-      const payload={ma_dot:old?old.ma_dot:null,hoc_ky:hk,nam_hoc:yh,ngay_thi:date,tu_tiet:slot.start,den_tiet:slot.end,hinh_thuc_thi:kind==='TL'?'Tự luận':'Lý thuyết',so_gv_can_cap:need};
+      const examKind=slot.end-slot.start+1===2?'TN':kind;
+      const payload={ma_dot:old?old.ma_dot:null,hoc_ky:hk,nam_hoc:yh,ngay_thi:date,tu_tiet:slot.start,den_tiet:slot.end,hinh_thuc_thi:examKind==='TL'?'Tự luận':'Trắc nghiệm',so_gv_can_cap:need};
       if(old) await API.updateExam(old.ma_ca,payload); else await API.createExam(payload);
       closeModal();await refreshExamData(false);render();toast((old?'Đã cập nhật':'Đã lưu')+' ca thi.');
     }catch(e){er.textContent=e.message}
@@ -710,7 +734,7 @@ const A={
       body:'<p style="margin-bottom:14px">Thao tác này sẽ xóa <b>'+total+' ca thi</b>'+(asg?' và <b>'+asg+' lượt phân công</b> liên quan':'')+'.</p>'
         +'<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:var(--badbg);color:var(--bad);font-size:13px">'
         +'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
-        +'<span>Dữ liệu bị xóa <b>không thể khôi phục</b>. Toàn bộ ca thi, phân công, yêu cầu đổi ca và lịch sử đổi ca liên quan sẽ bị xóa. Yêu cầu báo bận vẫn được giữ nhưng không còn gắn với ca đã xóa.</span></div>'
+        +'<span>Dữ liệu bị xóa <b>không thể khôi phục</b>. Toàn bộ ca thi, phân công, đơn báo bận, đơn đổi ca, thông báo và lịch sử xử lý liên quan sẽ bị xóa.</span></div>'
         +'<div class="err" id="clearAllExamsErr" style="margin-top:10px"></div>',
       foot:'<button class="btn" data-act="close">Hủy</button>'
         +'<button style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border:0;border-radius:8px;background:var(--bad);color:#fff;font-weight:600;font-size:14px;cursor:pointer" data-act="do-clear-all-exams">'
@@ -731,12 +755,12 @@ const A={
     if(!pend||!pend.rows.length)return;
     try{
       const hk=((S.dots||[])[0]||{}).HocKy||'HK1',yh=((S.dots||[])[0]||{}).NamHoc||((new Date().getFullYear())+'-'+(new Date().getFullYear()+1));
-      for(const r of pend.rows){const s=parsePeriod(r.period);await API.createExam({hoc_ky:hk,nam_hoc:yh,ngay_thi:r.date,tu_tiet:s.start,den_tiet:s.end,hinh_thuc_thi:r.kind==='TL'?'Tự luận':'Lý thuyết',so_gv_can_cap:r.need})}
+for(const r of pend.rows){const s=parsePeriod(r.period);const duration=s.end-s.start+1;const kind=duration===2?'TN':(r.kind==='TN'?'TN':'TL');await API.createExam({hoc_ky:hk,nam_hoc:yh,ngay_thi:r.date,tu_tiet:s.start,den_tiet:s.end,hinh_thuc_thi:kind==='TN'?'Trắc nghiệm':'Tự luận',so_gv_can_cap:r.need})}
       pend=null;await refreshExamData(false);render();toast('Đã nhập toàn bộ ca thi.');
     }catch(e){toast(e.message)}
   },
   'cancel-import-exam'(){pend=null;render()},
-  'reset-soft'(){S.soft={S1:{on:true,w:6},S2:{on:true,w:8,n:80}};render();toast('Đã khôi phục cấu hình mặc định.')},
+  'reset-soft'(){S.soft={S1:{on:true,w:10},S2:{on:true,w:9},S3:{on:true,w:8},S4:{on:true,w:7},S5:{on:true,w:6},S6:{on:true,w:4}};save();render();toast('Đã khôi phục cấu hình mặc định.')},
   precheck(){doPre();render()},
   async auto(){await runAuto()},
   async 'force-run'(){await autoRun()},
@@ -780,10 +804,10 @@ const A={
   'save-hist'(){snapshot('Thủ công');render();toast('Đã lưu bản này vào lịch sử.')},
   tab6(t){tab6=t.dataset.t;render()},
   xmode(t){F.xm=t.dataset.m;render()},
-  xlsx(){
+  async xlsx(){
     if(typeof XLSX==='undefined'){toast('Chưa tải được thư viện Excel. Kiểm tra kết nối mạng rồi thử lại.');return}
     const wb=XLSX.utils.book_new(),names={lec:'Theo giảng viên',ses:'Theo ca thi'};let n=0;
-    if(S.exams.length){XLSX.utils.book_append_sheet(wb,assignmentMatrix(),'Phân công coi thi');n++}
+    if(S.exams.length){let dutyRows=[];const maDot=window.__MA_DOT;if(maDot){try{const result=await API.dutyAssignments(maDot);dutyRows=Array.isArray(result.items)?result.items:[]}catch(e){console.warn('Không tải được lịch trực đề cho file Excel:',e)}}XLSX.utils.book_append_sheet(wb,assignmentMatrix(dutyRows),'Phân công coi thi');n++}
     ['lec','ses'].forEach(m=>{
       const d=exportData(m);if(!d.rows.length)return;
       const ws=XLSX.utils.aoa_to_sheet([d.head].concat(d.rows));
@@ -820,6 +844,8 @@ const A={
   },
   'del-hist'(t){S.hist=S.hist.filter(x=>x.id!==+t.dataset.id);render()}
 };
+let modalBackdropMouseDown=null;
+document.addEventListener('mousedown',e=>{const target=e.target.closest&&e.target.closest('.ov[data-act="ovclose"]');modalBackdropMouseDown=target===e.target?target:null},true);
 document.addEventListener('click',e=>{const t=e.target.closest('[data-act]');if(!t)return;const f=A[t.dataset.act];if(f)f(t,e)});
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape'&&$('#modal').innerHTML)closeModal();

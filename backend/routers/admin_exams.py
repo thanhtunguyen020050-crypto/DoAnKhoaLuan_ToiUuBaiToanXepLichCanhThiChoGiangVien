@@ -1,15 +1,18 @@
 """Router quản trị - đợt thi và ca thi của API FastAPI."""
+import logging
+
 from fastapi import APIRouter, HTTPException
 try:
     from ..ketnoi_sql import get_connection
-    from ..schemas.admin import DotThiIn, CaThiIn, LuuPhanCongIn, DinhMucChungIn
+    from ..schemas.admin import DotThiIn, CaThiIn, LuuPhanCongIn, DinhMucChungIn, DinhMucGiangVienIn
     from ..services.admin_helpers import dict_rows, _thu_vn, _drain
 except ImportError:
     from ketnoi_sql import get_connection
-    from schemas.admin import DotThiIn, CaThiIn, LuuPhanCongIn, DinhMucChungIn
+    from schemas.admin import DotThiIn, CaThiIn, LuuPhanCongIn, DinhMucChungIn, DinhMucGiangVienIn
     from services.admin_helpers import dict_rows, _thu_vn, _drain
 
 router = APIRouter(tags=['Quản trị - đợt thi và ca thi'])
+logger = logging.getLogger(__name__)
 
 
 @router.get('/api/dot-thi')
@@ -62,71 +65,111 @@ def list_exam_shifts(ma_dot:str|None=None):
 
 @router.post('/api/dot-thi/{ma_dot}/phan-cong')
 def save_exam_assignments(ma_dot:str,x:LuuPhanCongIn):
-    """Persist the visible quota weights, recalculate SQL quotas, then save assignments."""
+    """Save assignments against authoritative SQL quotas; browser quotas are never persisted here."""
     pairs=[(a.ma_ca.strip(),a.ma_gv.strip()) for a in x.assignments]
     if len(pairs)!=len(set(pairs)):
         raise HTTPException(400,'Danh sách có phân công bị lặp.')
-    weights=[(q.ma_gv.strip(),q.ty_le) for q in x.dinh_muc]
-    if len(weights)!=len({ma_gv for ma_gv,_ in weights}):
-        raise HTTPException(400,'Danh sách định mức có giảng viên bị lặp.')
     try:
         with get_connection() as cn:
-            cur=cn.cursor()
-            if weights:
-                cur.execute('CREATE TABLE #LuuDinhMuc (MaGV VARCHAR(20) COLLATE DATABASE_DEFAULT NOT NULL PRIMARY KEY, TyLeDinhMuc DECIMAL(5,2) NOT NULL)')
-                cur.executemany('INSERT INTO #LuuDinhMuc(MaGV,TyLeDinhMuc) VALUES (?,?)',weights)
-                cur.execute("SELECT TOP 1 r.MaGV FROM #LuuDinhMuc r LEFT JOIN dbo.GiangVien g ON g.MaGV=r.MaGV AND g.TrangThai=N'Đang công tác' WHERE g.MaGV IS NULL")
-                if cur.fetchone():
-                    raise HTTPException(400,'Danh sách định mức có giảng viên không tồn tại hoặc không còn công tác.')
+            try:
+                cur=cn.cursor()
 
-                # Đồng bộ tỷ lệ đang dùng trên giao diện, kể cả khi một GV chưa có
-                # dòng định mức cho đợt này. Không đụng tới các đợt thi khác.
+                # Keep the SQL quotas used by the solver authoritative. Re-running
+                # sp_TinhDinhMucTheoTyLe here could change them between solve and save.
+                # Lock both source sets until this transaction commits.
                 cur.execute('''
-                    UPDATE d SET TyLeDinhMuc=r.TyLeDinhMuc
-                    FROM dbo.DinhMucPhanCong d
-                    JOIN #LuuDinhMuc r ON r.MaGV=d.MaGV
-                    WHERE d.MaDot=?
-                ''',ma_dot)
-                cur.execute('''
-                    INSERT INTO dbo.DinhMucPhanCong(MaDot,MaGV,TyLeDinhMuc,GhiChu)
-                    SELECT ?,r.MaGV,r.TyLeDinhMuc,N'Đồng bộ khi lưu phân công'
-                    FROM #LuuDinhMuc r
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM dbo.DinhMucPhanCong d
-                        WHERE d.MaDot=? AND d.MaGV=r.MaGV
-                    )
+                    SELECT
+                        COALESCE((SELECT SUM(CONVERT(BIGINT,SoCaQuyDinh))
+                                  FROM dbo.DinhMucPhanCong WITH (UPDLOCK,HOLDLOCK)
+                                  WHERE MaDot=?),0),
+                        COALESCE((SELECT SUM(CONVERT(BIGINT,SoGVCanCap))
+                                  FROM dbo.CaThi WITH (UPDLOCK,HOLDLOCK)
+                                  WHERE MaDot=?),0)
                 ''',ma_dot,ma_dot)
+                totals=cur.fetchone()
+                quota_total=int(totals[0] or 0)
+                required_total=int(totals[1] or 0)
+                if quota_total != required_total:
+                    raise HTTPException(
+                        409,
+                        f'[RB1] Tổng định mức trong SQL là {quota_total} lượt, '
+                        f'nhưng tổng nhu cầu của đợt là {required_total} lượt. '
+                        'Lịch cũ được giữ nguyên; hãy đồng bộ định mức và chạy xếp lịch lại.'
+                    )
 
-            # SQL trigger RB1 đọc SoCaQuyDinh trong DB nên phải cập nhật quota
-            # từ tỷ lệ và tổng nhu cầu của đợt trước khi INSERT phân công.
-            cur.execute('EXEC dbo.sp_TinhDinhMucTheoTyLe ?',ma_dot)
-            _drain(cur)
+                # Stage small scalar parameters instead of sending a large JSON LOB.
+                # This avoids ODBC Driver 17 precision/NTEXT problems on UTF-8 SQL databases.
+                cur.execute('CREATE TABLE #LuuPhanCong (MaCa VARCHAR(50) COLLATE DATABASE_DEFAULT NOT NULL, MaGV VARCHAR(20) COLLATE DATABASE_DEFAULT NOT NULL, PRIMARY KEY(MaCa,MaGV))')
+                if pairs:
+                    cur.executemany('INSERT INTO #LuuPhanCong(MaCa,MaGV) VALUES (?,?)',pairs)
 
-            # Stage small scalar parameters instead of sending a large JSON LOB.
-            # This avoids ODBC Driver 17 precision/NTEXT problems on UTF-8 SQL databases.
-            cur.execute('CREATE TABLE #LuuPhanCong (MaCa VARCHAR(50) COLLATE DATABASE_DEFAULT NOT NULL, MaGV VARCHAR(20) COLLATE DATABASE_DEFAULT NOT NULL, PRIMARY KEY(MaCa,MaGV))')
-            if pairs:
-                cur.executemany('INSERT INTO #LuuPhanCong(MaCa,MaGV) VALUES (?,?)',pairs)
+                cur.execute('SELECT TOP 1 r.MaCa FROM #LuuPhanCong r LEFT JOIN dbo.CaThi c ON c.MaCa=r.MaCa AND c.MaDot=? WHERE c.MaCa IS NULL',ma_dot)
+                if cur.fetchone():
+                    raise HTTPException(400,'Danh sách có ca thi không thuộc đợt thi đã chọn.')
+                cur.execute("SELECT TOP 1 r.MaGV FROM #LuuPhanCong r LEFT JOIN dbo.GiangVien g ON g.MaGV=r.MaGV AND g.TrangThai=N'Đang công tác' WHERE g.MaGV IS NULL")
+                if cur.fetchone():
+                    raise HTTPException(400,'Danh sách có giảng viên không tồn tại hoặc không còn công tác.')
 
-            cur.execute('SELECT TOP 1 r.MaCa FROM #LuuPhanCong r LEFT JOIN dbo.CaThi c ON c.MaCa=r.MaCa AND c.MaDot=? WHERE c.MaCa IS NULL',ma_dot)
-            if cur.fetchone():
-                raise HTTPException(400,'Danh sách có ca thi không thuộc đợt thi đã chọn.')
-            cur.execute("SELECT TOP 1 r.MaGV FROM #LuuPhanCong r LEFT JOIN dbo.GiangVien g ON g.MaGV=r.MaGV AND g.TrangThai=N'Đang công tác' WHERE g.MaGV IS NULL")
-            if cur.fetchone():
-                raise HTTPException(400,'Danh sách có giảng viên không tồn tại hoặc không còn công tác.')
+                cur.execute('DELETE p FROM dbo.PhanCongCoiThi p INNER JOIN dbo.CaThi c ON c.MaCa=p.MaCa WHERE c.MaDot=?',ma_dot)
+                cur.execute('INSERT INTO dbo.PhanCongCoiThi(MaCa,MaGV) SELECT MaCa,MaGV FROM #LuuPhanCong')
 
-            cur.execute('DELETE p FROM dbo.PhanCongCoiThi p INNER JOIN dbo.CaThi c ON c.MaCa=p.MaCa WHERE c.MaDot=?',ma_dot)
-            cur.execute('INSERT INTO dbo.PhanCongCoiThi(MaCa,MaGV) SELECT MaCa,MaGV FROM #LuuPhanCong')
-            cur.execute('EXEC dbo.sp_KiemTraRangBuoc ?,1',ma_dot)
-            _drain(cur)
-            cur.execute('EXEC dbo.sp_ChotXepLich ?',ma_dot)
-            _drain(cur)
-            cn.commit()
-            return {'ok':True,'ma_dot':ma_dot,'assignments_saved':len(pairs)}
+                # This procedure validates the hard constraints, including exact
+                # quotas and required seats. Busy levels 2-3 are soft; do not let a
+                # stale installed sp_ChotXepLich threshold (53005) block publishing.
+                cur.execute('EXEC dbo.sp_KiemTraRangBuoc ?,1',ma_dot)
+                _drain(cur)
+                cn.commit()
+                return {'ok':True,'ma_dot':ma_dot,'assignments_saved':len(pairs)}
+            except Exception:
+                try:
+                    cn.rollback()
+                except Exception:
+                    logger.exception('Rollback failed while saving assignments for MaDot=%s',ma_dot)
+                raise
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception('Failed saving assignments for MaDot=%s',ma_dot)
         raise HTTPException(400,f'Không lưu được phân công vào SQL Server: {e}')
+
+@router.put('/api/dinh-muc/{ma_dot}/{ma_gv}')
+def update_lecturer_quota(ma_dot:str,ma_gv:str,x:DinhMucGiangVienIn):
+    """Save both quota representations; exact ca entries are protected in SQL."""
+    try:
+        with get_connection() as cn:
+            cur=cn.cursor()
+            cur.execute("SELECT 1 FROM dbo.GiangVien WHERE MaGV=? AND TrangThai=N'Đang công tác'",ma_gv)
+            if not cur.fetchone():
+                raise HTTPException(400,'Giảng viên không tồn tại hoặc không còn công tác.')
+            cur.execute('SELECT 1 FROM dbo.DinhMucPhanCong WHERE MaDot=? AND MaGV=?',ma_dot,ma_gv)
+            if not cur.fetchone():
+                raise HTTPException(404,'Giảng viên chưa được chọn tham gia đợt thi.')
+            cur.execute('''
+                UPDATE dbo.DinhMucPhanCong
+                SET TyLeDinhMuc=?,
+                    SoCaQuyDinh=CASE WHEN ?=1 THEN ? ELSE SoCaQuyDinh END,
+                    SoCaThuCong=?,
+                    GhiChu=CASE WHEN ?=1 THEN N'Định mức số ca nhập tay' ELSE N'Định mức theo tỷ lệ' END
+                WHERE MaDot=? AND MaGV=?
+            ''',x.ty_le,int(x.so_ca_thu_cong),x.so_ca,int(x.so_ca_thu_cong),int(x.so_ca_thu_cong),ma_dot,ma_gv)
+            cur.execute('EXEC dbo.sp_TinhDinhMucTheoTyLe ?',ma_dot)
+            _drain(cur)
+            cur.execute('''
+                SELECT MaGV,TyLeDinhMuc,SoCaQuyDinh,SoCaThuCong
+                FROM dbo.DinhMucPhanCong
+                WHERE MaDot=?
+                ORDER BY MaGV
+            ''',ma_dot)
+            items=dict_rows(cur)
+            cur.execute('SELECT ISNULL(SUM(SoGVCanCap),0) FROM dbo.CaThi WHERE MaDot=?',ma_dot)
+            total=int(cur.fetchone()[0] or 0)
+            cn.commit()
+            return {'ok':True,'ma_dot':ma_dot,'items':items,'tong_nhu_cau':total,
+                    'tong_dinh_muc':sum(int(item['SoCaQuyDinh'] or 0) for item in items)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400,f'Không lưu được định mức: {e}')
 
 @router.post('/api/ca-thi')
 def create_exam_shift(x:CaThiIn):

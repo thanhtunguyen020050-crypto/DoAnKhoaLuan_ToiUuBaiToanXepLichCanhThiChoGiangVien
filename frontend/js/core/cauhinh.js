@@ -2,25 +2,31 @@
 const KEY='huit-gacthi-v5';
 const LOGO='assets/logo-huit.png';
 const SES={1:'Ca 1 (07:00)',2:'Ca 2 (09:30)',3:'Ca 3 (13:00)',4:'Ca 4 (15:30)'};
-const EXAM_SLOTS=[['1 → 2',1,2],['1 → 3',1,3],['3 → 4',3,4],['4 → 6',4,6],['5 → 6',5,6],['7 → 8',7,8],['7 → 9',7,9],['9 → 10',9,10],['10 → 12',10,12],['11 → 12',11,12],['13 → 14',13,14]];
+const EXAM_SLOTS=[['1 → 2',1,2],['1 → 3',1,3],['3 → 4',3,4],['4 → 6',4,6],['5 → 6',5,6],['7 → 8',7,8],['7 → 9',7,9],['9 → 10',9,10],['10 → 12',10,12],['11 → 12',11,12],['13 → 14',13,14],['13 → 15',13,15],['13 → 16',13,16],['15 → 16',15,16]];
 const ROLES=['Quản trị viên'];
 const MODS=['Quản lý hệ thống','Quản lý giảng viên','Tiếp nhận lịch thi','Quản lý ràng buộc','Xếp lịch','Thống kê, báo cáo','Quản lý tài khoản','Quản lý báo bận'];
 const VIEWS=['sys','lec','exam','cons','sched','rep','accounts','busy_reqs'];
 const WD=['CN','T2','T3','T4','T5','T6','T7'];
 const HARD=[
-  {id:'H1',name:'Trong khoảng định mức ±1 ca',desc:'Giảng viên có định mức dương được nhận lệch tối đa 1 ca so với số ca theo tỷ lệ; định mức 0% thì không nhận ca.'},
+  {id:'H1',name:'Cân bằng định mức',desc:'Phân bổ số ca khớp tuyệt đối với định mức từng giảng viên; chỉ lệch khi Giáo vụ duyệt đổi ca.'},
   {id:'H2',name:'Đủ giám thị mỗi ca',desc:'Mỗi ca thi có đủ số giảng viên theo yêu cầu.'},
   {id:'H3',name:'Không trùng thời gian',desc:'Một giảng viên không gác hai ca cùng ngày, cùng giờ.'},
-  {id:'H4',name:'Không xếp vào lịch dạy',desc:'Không xếp giảng viên gác thi vào thời gian đã có lịch dạy.'},
-  {id:'H5',name:'Một buổi một loại ca',desc:'Trong cùng một buổi, giảng viên chỉ gác một loại ca: lý thuyết hoặc tự luận.'},
-  {id:'H6',name:'Phải né lịch bận mức 1',desc:'Đi công tác, họp theo quyết định của Trường là ràng buộc cứng: không được xếp vào thời gian đã khai báo bận mức 1.'}
+  {id:'H4',name:'Không xếp vào lịch dạy & trực đề',desc:'Không xếp giảng viên vào thời gian đã có lịch dạy hoặc lịch trực đề.'},
+  {id:'H5',name:'Một buổi một loại ca',desc:'Trong cùng buổi chỉ gác trắc nghiệm hoặc tự luận; ưu tiên xếp theo cụm ca.'},
+  {id:'H6',name:'Phải né lịch bận mức 1',desc:'Đi công tác, họp theo quyết định của Trường là ràng buộc cứng; tuyệt đối không xếp vào thời gian này.'},
+  {id:'H7',name:'Thời gian di chuyển khác cơ sở',desc:'Nếu lịch dạy/trực đề và ca thi khác cơ sở, phải chừa ít nhất một tiết để di chuyển.'},
+  {id:'H8',name:'Giới hạn tải khi nhận ca tối',desc:'Chỉ xếp ca từ tiết 13 khi tổng tiết dạy, trực đề và coi thi trong ngày không vượt quá 12 tiết.'}
 ];
 const SOFT=[
-  {id:'S1',name:'Giảm ca gãy',desc:'Ưu tiên xếp các ca của cùng giảng viên liền tiết và trong cùng buổi; tính khoảng trống tiết hoặc phải quay lại trường buổi khác là ca gãy.'},
-  {id:'S2',name:'Né lịch bận mức 2–3',desc:'Mức 2 (việc gia đình) được ưu tiên né mạnh; mức 3 (sức khỏe/khẩn cấp đột xuất) được ưu tiên né sau cùng. Hệ thống tự xác định mức từ Lý do, không cho người dùng tự chọn mức.'}
+  {id:'S1',name:'Cân bằng ca sáng/tối',desc:'Phân bổ ca sáng và tối cho giảng viên; giữ số ca tối giữa mọi người cân bằng.'},
+  {id:'S2',name:'Giảm ca gãy',desc:'Hạn chế khoảng trống 1–2 tiết giữa lịch dạy/trực đề và giờ coi thi.'},
+  {id:'S3',name:'Gom cụm ca thi',desc:'Ưu tiên xếp nối tiếp sau lịch dạy/trực đề và dồn định mức gọn trong một tuần.'},
+  {id:'S4',name:'Cân bằng hình thức thi',desc:'Phân bổ đồng đều ca Trắc nghiệm và Tự luận cho từng giảng viên trong đợt.'},
+  {id:'S5',name:'Né lịch bận mức 2',desc:'Ưu tiên né 70%–90% lịch gia đình, hiếu hỷ đã đăng ký.'},
+  {id:'S6',name:'Né lịch bận mức 3',desc:'Né lịch khẩn cấp/đột xuất khi không ảnh hưởng các ưu tiên cao hơn.'}
 ];
 const svg=(p,s=16)=>'<svg viewBox="0 0 24 24" width="'+s+'" height="'+s+'" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+p+'</svg>';
-const LB={LT:'Lý thuyết',TL:'Tự luận'};
+const LB={LT:'Trắc nghiệm',TN:'Trắc nghiệm',TL:'Tự luận'};
 const IC={
   lock:svg('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',14),
   unlock:svg('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-1.5"/>',14),

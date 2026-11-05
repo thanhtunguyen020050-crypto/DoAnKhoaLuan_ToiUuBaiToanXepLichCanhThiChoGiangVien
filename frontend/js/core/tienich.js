@@ -8,9 +8,18 @@ const lec=id=>S.lecs.find(l=>String(l.id)===String(id));
 function teachingEntry(t){
   if(typeof t==='string'){
     const [date,range='']=t.split('|'),m=range.match(/^(\d+)\s*[→>-]\s*(\d+)$/);
-    return {date,start:m?Number(m[1]):Number(range)||1,end:m?Number(m[2]):Number(range)||2,source:null,note:null};
+    return {date,start:m?Number(m[1]):Number(range)||1,end:m?Number(m[2]):Number(range)||2,source:null,note:null,room:'',courseType:'',course:''};
   }
-  return {date:String(t&& (t.date??t.NgayDay) ||'').slice(0,10),start:Number(t&&(t.start??t.TuTiet))||1,end:Number(t&&(t.end??t.DenTiet))||2,source:(t&&(t.source??t.NguonFile))??null,note:(t&&(t.note??t.GhiChu))??null};
+  return {
+    date: String((t && (t.date ?? t.NgayDay)) || '').slice(0, 10),
+    start: Number(t && (t.start ?? t.TuTiet)) || 1,
+    end: Number(t && (t.end ?? t.DenTiet)) || 2,
+    source: (t && (t.source ?? t.NguonFile)) ?? null,
+    note: (t && (t.note ?? t.GhiChu)) ?? null,
+    room: String((t && (t.room ?? t.Phong ?? t.PhongHoc ?? t.DiaDiem)) ?? ''),
+    courseType: String((t && (t.courseType ?? t.LoaiPhong ?? t.LoaiHocPhan ?? t.HinhThuc)) ?? ''),
+    course: String((t && (t.course ?? t.MonHoc ?? t.TenMon ?? t.Mon)) ?? '')
+  };
 }
 const inDot=l=>l.inDot!==false;
 const exm=id=>S.exams.find(e=>e.id===id);
@@ -75,5 +84,34 @@ function parseDate(v){
 function plain(v){return String(v==null?'':v).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/đ/g,'d').replace(/[\u00a0\u200b\ufeff]/g,' ').replace(/\s+/g,' ').trim()}
 function parsePeriod(v){const m=String(v||'').match(/(\d{1,2})\s*(?:->|\u2192|\u279c|\u2013|\u2014|-)\s*(\d{1,2})/);return m&&+m[1]<+m[2]&&+m[1]>=1&&+m[2]<=16?{start:+m[1],end:+m[2],key:+m[1]+'-'+(+m[2])}:null}
 function parseExamSlot(v){const r=parsePeriod(v);if(r){const x=EXAM_SLOTS.find(s=>s[1]===r.start&&s[2]===r.end);return{start:r.start,end:r.end,label:x?x[0]:r.start+' → '+r.end}}const m=plain(v).match(/^(?:ca\s*)?([1-4])$/);if(!m)return null;const x=EXAM_SLOTS[[0,2,5,7][+m[1]-1]];return{start:x[1],end:x[2],label:x[0]}}
+const PERIOD_START_MINUTES={
+  theory:[null,390,440,490,570,620,670,750,800,850,900,950,1030,1090,1140,1190,1240],
+  practical:[null,420,470,520,570,620,670,750,800,850,900,950,1030,1080,1130,1180,1230]
+};
+function periodToTime(period,isEnd=false,kind='exam',startPeriod=period,endPeriod=period,entry=null){
+  const p=Number(period),start=Number(startPeriod),end=Number(endPeriod);
+  if(!Number.isInteger(p)||p<1||p>16)return '07:00';
+  let table='practical';
+  if(kind==='teaching'){
+    const meta=entry||{};
+    const roomHint=plain([
+      meta.room,meta.phong,meta.tenPhong,meta.tenPhongHoc,meta.roomName,
+      meta.location,meta.diaDiem,meta.coSo,meta.loaiPhong,meta.loaiPhongHoc,
+      meta.roomType
+    ].filter(Boolean).join(' '));
+    const courseHint=plain([
+      meta.courseType,meta.loaiHocPhan,meta.course,meta.tenHocPhan,
+      meta.subject,meta.tenMon,meta.monHoc,meta.scheduleType,meta.loaiLich
+    ].filter(Boolean).join(' '));
+    const practical=/phong may|thuc hanh|thi nghiem|lab|gdtc|giao duc the chat|quoc phong|qp/;
+    if(practical.test(roomHint))table='practical';
+    else if(/zoom/.test(roomHint)||/ly thuyet|theory/.test(courseHint))table='theory';
+    else if(practical.test(courseHint))table='practical';
+    else table=Number.isFinite(start)&&Number.isFinite(end)&&end-start+1<=3?'theory':'practical';
+  }
+  const minutes=PERIOD_START_MINUTES[table][p]+(isEnd?50:0),h=Math.floor(minutes/60),m=minutes%60;
+  return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');
+}
+if(typeof globalThis!=='undefined')globalThis.periodToTime=periodToTime;
 function teachName(rows,key){const r=rows.find(x=>x.name.trim().toLocaleLowerCase('vi')===key);return r?r.name:key}
 

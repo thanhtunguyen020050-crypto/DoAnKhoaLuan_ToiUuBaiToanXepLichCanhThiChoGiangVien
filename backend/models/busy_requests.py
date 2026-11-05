@@ -9,6 +9,9 @@ except ImportError:
     from schemas.busy_requests import BusyRequestCreateIn, BusyRequestNominateIn, BusyRequestApproveIn, BusyRequestRejectIn
 
 from datetime import datetime, timedelta
+import json
+import re
+import unicodedata
 
 from fastapi import APIRouter, HTTPException, Depends, Query
 
@@ -34,8 +37,172 @@ def _format_dt(dt):
         return dt.isoformat()
     return str(dt)
 
+def _calendar_date(value):
+    if isinstance(value, datetime):
+        return value.date()
+    if hasattr(value, 'year') and hasattr(value, 'month') and hasattr(value, 'day'):
+        return value
+    text = str(value or '').strip()
+    for fmt in ('%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%d/%m/%Y', '%d-%m-%Y'):
+        try:
+            return datetime.strptime(text[:19], fmt).date()
+        except ValueError:
+            pass
+    match = re.search(r'\b(\d{4}-\d{2}-\d{2})\b', text)
+    if match:
+        try:
+            return datetime.strptime(match.group(1), '%Y-%m-%d').date()
+        except ValueError:
+            pass
+    return None
+
+def _calendar_key(value):
+    return re.sub(r'[^a-z0-9]', '', unicodedata.normalize('NFKD', str(value or '')).encode('ascii', 'ignore').decode().lower())
+
+def _calendar_record(row, columns):
+    """Normalize SQL tuples, dict/object rows and JSON/text calendar payloads."""
+    if isinstance(row, dict):
+        values = dict(row)
+    elif hasattr(row, '_asdict'):
+        values = row._asdict()
+    else:
+        values = dict(zip(columns, row))
+    flattened = dict(values)
+    for value in values.values():
+        if not isinstance(value, str):
+            continue
+        text = value.strip()
+        if text.startswith(('{', '[')):
+            try:
+                parsed = json.loads(text)
+            except (TypeError, ValueError):
+                parsed = None
+            records = parsed if isinstance(parsed, list) else [parsed]
+            for record in records:
+                if isinstance(record, dict):
+                    flattened.update(record)
+        # Also accept key/value text such as "NgayDay=...; TuTiet=1; DenTiet=3".
+        for match in re.finditer(r'([\wÀ-ỹ]+)\s*[:=]\s*([^,;|]+)', text, re.I):
+            flattened.setdefault(match.group(1), match.group(2).strip())
+    return flattened
+
+def _calendar_period(row, columns):
+    values = _calendar_record(row, columns)
+    lowered = {_calendar_key(k): v for k, v in values.items()}
+    start = next((lowered[k] for k in (
+        'tutiet', 'tietbatdau', 'tietbd', 'tietdau', 'tietstart', 'periodfrom', 'startperiod'
+    ) if k in lowered), None)
+    end = next((lowered[k] for k in (
+        'dentiet', 'tietketthuc', 'tietkt', 'tietcuoi', 'tietend', 'periodto', 'endperiod'
+    ) if k in lowered), None)
+    def as_int(value):
+        match = re.search(r'\d{1,2}', str(value or ''))
+        return int(match.group(0)) if match else None
+    first, last = as_int(start), as_int(end)
+    if first is not None:
+        return first, (last if last is not None else first)
+    # Some imported calendar rows store a period range in one text field,
+    # such as "1-3", "Tiet 1 -> 3", or a pipe-delimited record.
+    text = ' | '.join(str(v) for v in values.values() if v is not None)
+    text = re.sub(r'\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b|\b\d{1,2}/\d{1,2}/\d{4}\b', ' ', text)
+    match = re.search(r'(?:ti[eế]t\s*)?(\d{1,2})\s*(?:-|–|—|->|→|đ[eế]n|to)\s*(\d{1,2})', text, re.I)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return None, None
+
+def _calendar_location(row, columns):
+    aliases = {'phong', 'phonghoc', 'phongthi', 'diadiem', 'coso', 'campus', 'location', 'address'}
+    for name, value in _calendar_record(row, columns).items():
+        key = _calendar_key(name)
+        if key in aliases and value:
+            return str(value).strip()
+    return ''
+
+def _campus_key(value):
+    raw = unicodedata.normalize('NFKD', str(value or '')).encode('ascii', 'ignore').decode().lower()
+    known = (
+        ('tan ky tan quy', ('tan ky tan quy', '93 tan ky')),
+        ('le trong tan', ('le trong tan', '140 le trong tan')),
+    )
+    for key, variants in known:
+        if any(variant in raw for variant in variants):
+            return key
+    # Room identifiers often differ while the campus address after a dash is identical.
+    parts = re.split(r'\s*[-–—]\s*', raw)
+    campus = parts[-1] if len(parts) > 1 else raw
+    return re.sub(r'[^a-z0-9]+', ' ', campus).strip()
+
+def _exam_form_key(value):
+    normalized = _calendar_key(value)
+    if 'tuluan' in normalized or 'essay' in normalized:
+        return 'tuluan'
+    if 'lythuyet' in normalized or 'tracnghiem' in normalized or 'multiplechoice' in normalized:
+        return 'lythuyet'
+    return normalized
+
+def _load_lecturer_calendar(cur, table_name, ma_gv):
+    """Read one fixed-calendar table using its actual column names."""
+    if table_name not in {'LichDayGV', 'PhanCongTrucDe'}:
+        return []
+    cur.execute('''SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+                   WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME=? ORDER BY ORDINAL_POSITION''', table_name)
+    columns = [r[0] for r in cur.fetchall()]
+    if not columns:
+        raise HTTPException(status_code=500, detail=f"Không tìm thấy bảng dbo.{table_name}; không thể xác minh ràng buộc lịch.")
+    person_aliases = {
+        'magv', 'magiangvien', 'giangvien', 'giangvienid', 'magvtrucde',
+        'magvtruc', 'magiamthi', 'macanbo', 'staffid'
+    }
+    person_col = next((c for c in columns if _calendar_key(c) in person_aliases), None)
+    if person_col:
+        cur.execute(f'SELECT * FROM dbo.[{table_name}] WHERE [{person_col}]=?', ma_gv)
+    else:
+        # Some imports store the lecturer identity inside a JSON/text payload.
+        cur.execute(f'SELECT * FROM dbo.[{table_name}]')
+    rows = cur.fetchall()
+    date_aliases = {'ngay', 'ngayday', 'ngaytruc', 'ngaytrucde', 'ngayhoc', 'ngaycongtac', 'ngaybatdau', 'ngaybd', 'date'}
+    events = []
+    for row in rows:
+        values = _calendar_record(row, columns)
+        if not person_col:
+            person_value = next((v for k, v in values.items() if _calendar_key(k) in person_aliases), None)
+            if person_value is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Không xác định được giảng viên trong dữ liệu dbo.{table_name}; không thể xác minh ràng buộc lịch."
+                )
+            if str(person_value).strip().casefold() != str(ma_gv).strip().casefold():
+                continue
+        date_value = None
+        for name, value in values.items():
+            key = _calendar_key(name)
+            if key in date_aliases and value is not None:
+                date_value = _calendar_date(value)
+                if date_value:
+                    break
+        if not date_value:
+            date_value = next((_calendar_date(v) for v in values.values() if _calendar_date(v)), None)
+        first, last = _calendar_period(row, columns)
+        if not date_value or first is None or last is None:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Dữ liệu lịch trong dbo.{table_name} không đúng định dạng ngày/tiết; không thể duyệt đổi ca an toàn."
+            )
+        events.append({'date': date_value, 'start': first, 'end': last,
+                       'location': _calendar_location(row, columns), 'source': table_name})
+    return events
+
+def _travel_gap_violated(event, target_start, target_end, target_location):
+    if not event.get('location') or not target_location or _campus_key(event['location']) == _campus_key(target_location):
+        return False
+    if event['end'] < target_start:
+        return target_start - event['end'] < 2
+    if target_end < event['start']:
+        return event['start'] - target_end < 2
+    return False
+
 def _validate_replacement_lecturer(cur, ma_gv_thay_the: str, ma_ca: str, ma_gv_cu: str) -> list[str]:
-    """Kiểm tra toàn bộ ràng buộc (RB1-RB6) đối với giảng viên thay thế trước khi gán ca."""
+    """Check hard time constraints for a lecturer accepting an approved cover."""
     errors = []
     if ma_gv_thay_the == ma_gv_cu:
         return ["Giảng viên thay thế không thể là chính giảng viên báo bận."]
@@ -49,13 +216,13 @@ def _validate_replacement_lecturer(cur, ma_gv_thay_the: str, ma_ca: str, ma_gv_c
         return [f"Giảng viên {gv_row[0]} ({ma_gv_thay_the}) không còn công tác."]
 
     # Lấy thông tin ca thi
-    cur.execute("""SELECT c.MaCa, c.MaDot, c.NgayThi, c.TuTiet, c.DenTiet, c.Buoi, c.NhomHinhThucThi, c.HinhThucThi
+    cur.execute("""SELECT c.MaCa, c.MaDot, c.NgayThi, c.TuTiet, c.DenTiet, c.Buoi, c.NhomHinhThucThi, c.HinhThucThi, c.PhongThi
                    FROM dbo.CaThi c WHERE c.MaCa = ?""", ma_ca)
     ca_row = cur.fetchone()
     if not ca_row:
         return ["Ca thi không tồn tại."]
 
-    ma_dot, ngay_thi, tu_tiet, den_tiet, buoi, nhom_hinh_thuc = ca_row[1], ca_row[2], ca_row[3], ca_row[4], ca_row[5], ca_row[6]
+    ma_dot, ngay_thi, tu_tiet, den_tiet, buoi, nhom_hinh_thuc, phong_thi = ca_row[1], ca_row[2], ca_row[3], ca_row[4], ca_row[5], ca_row[6], ca_row[8]
 
     # Kiểm tra đã được phân công ca này chưa
     cur.execute("SELECT 1 FROM dbo.PhanCongCoiThi WHERE MaGV = ? AND MaCa = ?", ma_gv_thay_the, ma_ca)
@@ -72,14 +239,21 @@ def _validate_replacement_lecturer(cur, ma_gv_thay_the: str, ma_ca: str, ma_gv_c
     if conflict_ca:
         errors.append(f"[RB3] Trùng thời gian với ca {conflict_ca[0]} (tiết {conflict_ca[1]}–{conflict_ca[2]}).")
 
-    # RB4: Trùng lịch dạy
-    cur.execute("""SELECT TuTiet, DenTiet FROM dbo.LichDayGV
-                   WHERE MaGV = ? AND NgayDay = ?
-                     AND TuTiet <= ? AND ? <= DenTiet""",
-                ma_gv_thay_the, ngay_thi, den_tiet, tu_tiet)
-    conflict_day = cur.fetchone()
-    if conflict_day:
-        errors.append(f"[RB4] Trùng lịch giảng dạy (tiết {conflict_day[0]}–{conflict_day[1]}).")
+    # RB4/RB7: Teaching and paper-duty calendars can have schema-dependent
+    # date/period/location names; normalize those rows before checking.
+    calendar_events = []
+    for table_name, label in (('LichDayGV', 'lịch dạy'), ('PhanCongTrucDe', 'lịch trực đề')):
+        for event in _load_lecturer_calendar(cur, table_name, ma_gv_thay_the):
+            if event['date'] != _calendar_date(ngay_thi):
+                continue
+            if not phong_thi or not event['location']:
+                errors.append(f"[RB7] Thiếu thông tin phòng/cơ sở của {label} hoặc ca thi nên không thể xác minh thời gian di chuyển.")
+                continue
+            calendar_events.append(event)
+            if event['start'] <= den_tiet and tu_tiet <= event['end']:
+                errors.append(f"[RB4] Trùng {label} (tiết {event['start']}–{event['end']}).")
+            elif _travel_gap_violated(event, tu_tiet, den_tiet, phong_thi):
+                errors.append(f"[RB7] Không đủ 1 tiết di chuyển giữa {label} và ca thi do khác cơ sở.")
 
     # RB6: Trùng lịch bận mức 1 (bắt buộc né)
     cur.execute("""SELECT TuTiet, DenTiet, LyDo FROM dbo.LichBanGV
@@ -90,35 +264,31 @@ def _validate_replacement_lecturer(cur, ma_gv_thay_the: str, ma_ca: str, ma_gv_c
     if conflict_ban:
         errors.append(f"[RB6] Trùng lịch bận mức 1: {conflict_ban[2]} (tiết {conflict_ban[0]}–{conflict_ban[1]}).")
 
-    # RB5: Không trộn nhóm hình thức thi trong cùng một buổi
-    cur.execute("""SELECT c.MaCa, c.HinhThucThi FROM dbo.PhanCongCoiThi p
+    # Keep one full lesson free when another already-assigned exam is on a
+    # different campus on the same day.
+    cur.execute('''SELECT c.MaCa,c.TuTiet,c.DenTiet,c.PhongThi
+                   FROM dbo.PhanCongCoiThi p JOIN dbo.CaThi c ON c.MaCa=p.MaCa
+                   WHERE p.MaGV=? AND c.MaCa<>? AND c.NgayThi=?''',
+                ma_gv_thay_the, ma_ca, ngay_thi)
+    for existing in cur.fetchall():
+        event = {'start': existing[1], 'end': existing[2], 'location': existing[3] or ''}
+        if _travel_gap_violated(event, tu_tiet, den_tiet, phong_thi):
+            errors.append(f"[RB7] Không đủ 1 tiết di chuyển giữa ca {existing[0]} và ca được nhận do khác cơ sở.")
+
+    # RB5: compare normalized format labels so NULLs or accent differences cannot bypass it.
+    cur.execute("""SELECT c.MaCa, c.NhomHinhThucThi, c.HinhThucThi FROM dbo.PhanCongCoiThi p
                    JOIN dbo.CaThi c ON c.MaCa = p.MaCa
                    WHERE p.MaGV = ? AND c.MaDot = ? AND c.NgayThi = ? AND c.Buoi = ?
-                     AND c.MaCa <> ? AND c.NhomHinhThucThi <> ?""",
-                ma_gv_thay_the, ma_dot, ngay_thi, buoi, ma_ca, nhom_hinh_thuc)
-    conflict_nhom = cur.fetchone()
-    if conflict_nhom:
-        errors.append(f"[RB5] Trộn hình thức thi trong cùng buổi (ca {conflict_nhom[0]} hình thức {conflict_nhom[1]}).")
+                     AND c.MaCa <> ?""",
+                ma_gv_thay_the, ma_dot, ngay_thi, buoi, ma_ca)
+    requested_form = _exam_form_key(nhom_hinh_thuc or ca_row[7])
+    for conflict_nhom in cur.fetchall():
+        existing_form = _exam_form_key(conflict_nhom[1] or conflict_nhom[2])
+        if requested_form and existing_form and requested_form != existing_form:
+            errors.append(f"[RB5] Trộn hình thức thi trong cùng buổi (ca {conflict_nhom[0]} hình thức {conflict_nhom[2] or conflict_nhom[1]}).")
 
-    # RB1: Định mức trong khoảng cho phép ±1 ca
-    cur.execute("""SELECT ISNULL(dm.SoCaQuyDinh, 0),
-                          (SELECT COUNT(*) FROM dbo.PhanCongCoiThi p
-                           JOIN dbo.CaThi c ON c.MaCa = p.MaCa
-                           WHERE p.MaGV = ? AND c.MaDot = ?),
-                          ISNULL(cfg.DoLechDinhMucChoPhep, 1)
-                   FROM dbo.GiangVien gv
-                   LEFT JOIN dbo.DinhMucPhanCong dm ON dm.MaDot = ? AND dm.MaGV = gv.MaGV
-                   LEFT JOIN dbo.CauHinhXepLich cfg ON cfg.MaDot = ?
-                   WHERE gv.MaGV = ?""",
-                ma_gv_thay_the, ma_dot, ma_dot, ma_dot, ma_gv_thay_the)
-    quota_row = cur.fetchone()
-    if quota_row:
-        dinh_muc, da_co, do_lech = quota_row[0], quota_row[1], quota_row[2]
-        if dinh_muc == 0 and (da_co + 1) > 0:
-            errors.append(f"[RB1] Giảng viên có định mức bằng 0, không được phân công ca thi.")
-        elif dinh_muc > 0 and (da_co + 1) > (dinh_muc + do_lech):
-            errors.append(f"[RB1] Vượt quá định mức tối đa cho phép ({da_co + 1} ca so với định mức {dinh_muc} ±{do_lech}).")
-
+    # Do not enforce the original exact quota here: an admin-approved cover is
+    # the explicit exception that transfers one real assignment from A to B.
     return errors
 
 def get_my_busy_requests(ma_gv: str=None):
@@ -684,11 +854,14 @@ def admin_approve_busy_request(request_id: int, payload: BusyRequestApproveIn, a
             phan_cong_truoc = f'Giảng viên {ten_gv_cu} ({ma_gv_cu}) coi ca {ma_ca}'
             phan_cong_sau = f'Giảng viên {ten_gv_moi} ({ma_gv_thay_the}) thay thế coi ca {ma_ca}'
             ghi_chu_pct = f'Điều chỉnh theo yêu cầu báo bận #{request_id}'
+            # Record the approved transfer before changing PhanCongCoiThi.
+            # The SQL Server trigger can then recognize its quota exception;
+            # any failed update rolls the history/status back with this txn.
+            cur.execute("\n                INSERT INTO dbo.LichSuDieuChinhLich (\n                    MaYeuCau, MaGV, MaGVThayThe, MaCa,\n                    PhanCongTruoc, PhanCongSau, NguoiThucHien,\n                    HanhDong, LyDo\n                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'DUYET_DOI_LICH', ?)\n            ", request_id, ma_gv_cu, ma_gv_thay_the, ma_ca, phan_cong_truoc, phan_cong_sau, admin_user, ghi_chu_admin)
+            cur.execute("\n                UPDATE dbo.YeuCauBaoBan\n                SET TrangThai = 'APPROVED',\n                    NguoiXuLy = ?,\n                    ThoiGianXuLy = SYSDATETIME(),\n                    GhiChuAdmin = ?\n                WHERE MaYeuCau = ?\n            ", admin_user, ghi_chu_admin, request_id)
             cur.execute('\n                UPDATE dbo.PhanCongCoiThi\n                SET MaGV = ?, GhiChu = ?\n                WHERE MaCa = ? AND MaGV = ?\n            ', ma_gv_thay_the, ghi_chu_pct, ma_ca, ma_gv_cu)
             if cur.rowcount != 1:
                 raise HTTPException(500, 'Cập nhật phân công thất bại. Không có dòng nào bị ảnh hưởng.')
-            cur.execute("\n                INSERT INTO dbo.LichSuDieuChinhLich (\n                    MaYeuCau, MaGV, MaGVThayThe, MaCa,\n                    PhanCongTruoc, PhanCongSau, NguoiThucHien,\n                    HanhDong, LyDo\n                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'DUYET_DOI_LICH', ?)\n            ", request_id, ma_gv_cu, ma_gv_thay_the, ma_ca, phan_cong_truoc, phan_cong_sau, admin_user, ghi_chu_admin)
-            cur.execute("\n                UPDATE dbo.YeuCauBaoBan\n                SET TrangThai = 'APPROVED',\n                    NguoiXuLy = ?,\n                    ThoiGianXuLy = SYSDATETIME(),\n                    GhiChuAdmin = ?\n                WHERE MaYeuCau = ?\n            ", admin_user, ghi_chu_admin, request_id)
             tb_msg_cu = f'Yêu cầu báo bận #{request_id} của bạn đã được chấp thuận. Ca {ma_ca} đã được chuyển cho đồng nghiệp {ten_gv_moi}. Lịch coi thi của bạn đã được cập nhật.'
             cur.execute("\n                INSERT INTO dbo.ThongBao (MaGVNhan, DoiTuongNhan, TieuDe, NoiDung, Loai, YeuCauBaoBanID)\n                VALUES (?, 'Lecturer', N'Yêu cầu báo bận đã được chấp thuận', ?, 'BusyApproved', ?)\n            ", ma_gv_cu, tb_msg_cu, request_id)
             tb_msg_moi = f'Quản trị viên đã phân công bạn coi thi ca {ma_ca} thay thế cho giảng viên {ten_gv_cu} theo yêu cầu báo bận #{request_id}. Vui lòng kiểm tra lịch cá nhân.'

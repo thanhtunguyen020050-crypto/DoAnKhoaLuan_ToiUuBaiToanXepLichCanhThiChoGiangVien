@@ -8,19 +8,19 @@ except ImportError:
     from auth_utils import require_admin
 
 try:
-    from ..schemas.admin import DotThiIn, CaThiIn, LuuPhanCongIn, DinhMucChungIn, TrucDeImportIn
+    from ..schemas.admin import DotThiIn, CaThiIn, LuuPhanCongIn, DinhMucChungIn, DinhMucGiangVienIn, TrucDeImportIn
 except ImportError:
-    from schemas.admin import DotThiIn, CaThiIn, LuuPhanCongIn, DinhMucChungIn, TrucDeImportIn
+    from schemas.admin import DotThiIn, CaThiIn, LuuPhanCongIn, DinhMucChungIn, DinhMucGiangVienIn, TrucDeImportIn
 
 try:
-    from ..models.admin_exams import list_exam_periods as _model_list_exam_periods, latest_exam_period as _model_latest_exam_period, create_exam_period as _model_create_exam_period, update_exam_period as _model_update_exam_period, delete_exam_period as _model_delete_exam_period, list_exam_shifts as _model_list_exam_shifts, save_exam_assignments as _model_save_exam_assignments, remove_saved_assignments as _model_remove_saved_assignments, create_exam_shift as _model_create_exam_shift, update_exam_shift as _model_update_exam_shift, clear_all_exams as _model_clear_all_exams, delete_exam_shift as _model_delete_exam_shift, set_common_quota as _model_set_common_quota
+    from ..models.admin_exams import list_exam_periods as _model_list_exam_periods, latest_exam_period as _model_latest_exam_period, create_exam_period as _model_create_exam_period, update_exam_period as _model_update_exam_period, delete_exam_period as _model_delete_exam_period, list_exam_shifts as _model_list_exam_shifts, save_exam_assignments as _model_save_exam_assignments, remove_saved_assignments as _model_remove_saved_assignments, create_exam_shift as _model_create_exam_shift, update_exam_shift as _model_update_exam_shift, clear_all_exams as _model_clear_all_exams, delete_exam_shift as _model_delete_exam_shift, set_common_quota as _model_set_common_quota, set_lecturer_quota as _model_set_lecturer_quota
 except ImportError:
-    from models.admin_exams import list_exam_periods as _model_list_exam_periods, latest_exam_period as _model_latest_exam_period, create_exam_period as _model_create_exam_period, update_exam_period as _model_update_exam_period, delete_exam_period as _model_delete_exam_period, list_exam_shifts as _model_list_exam_shifts, save_exam_assignments as _model_save_exam_assignments, remove_saved_assignments as _model_remove_saved_assignments, create_exam_shift as _model_create_exam_shift, update_exam_shift as _model_update_exam_shift, clear_all_exams as _model_clear_all_exams, delete_exam_shift as _model_delete_exam_shift, set_common_quota as _model_set_common_quota
+    from models.admin_exams import list_exam_periods as _model_list_exam_periods, latest_exam_period as _model_latest_exam_period, create_exam_period as _model_create_exam_period, update_exam_period as _model_update_exam_period, delete_exam_period as _model_delete_exam_period, list_exam_shifts as _model_list_exam_shifts, save_exam_assignments as _model_save_exam_assignments, remove_saved_assignments as _model_remove_saved_assignments, create_exam_shift as _model_create_exam_shift, update_exam_shift as _model_update_exam_shift, clear_all_exams as _model_clear_all_exams, delete_exam_shift as _model_delete_exam_shift, set_common_quota as _model_set_common_quota, set_lecturer_quota as _model_set_lecturer_quota
 
 try:
-    from ..models.admin_duty import import_duty as _model_import_duty, list_duty as _model_list_duty
+    from ..models.admin_duty import import_duty as _model_import_duty, list_duty as _model_list_duty, clear_all_duty as _model_clear_all_duty, clear_lecturer_duty as _model_clear_lecturer_duty
 except ImportError:
-    from models.admin_duty import import_duty as _model_import_duty, list_duty as _model_list_duty
+    from models.admin_duty import import_duty as _model_import_duty, list_duty as _model_list_duty, clear_all_duty as _model_clear_all_duty, clear_lecturer_duty as _model_clear_lecturer_duty
 
 router = APIRouter(tags=['Quản trị - đợt thi và ca thi'])
 
@@ -77,6 +77,11 @@ def set_common_quota(x: DinhMucChungIn):
     return _model_set_common_quota(x=x)
 
 
+@router.put('/api/dinh-muc/{ma_dot}/{ma_gv}')
+def set_lecturer_quota(ma_dot: str, ma_gv: str, x: DinhMucGiangVienIn, admin_user: str = Depends(require_admin)):
+    return _model_set_lecturer_quota(ma_dot=ma_dot, ma_gv=ma_gv, x=x)
+
+
 @router.post('/api/truc-de/import')
 def import_exam_paper_duty(x: TrucDeImportIn, admin_user: str = Depends(require_admin)):
     return _model_import_duty(x=x)
@@ -85,3 +90,13 @@ def import_exam_paper_duty(x: TrucDeImportIn, admin_user: str = Depends(require_
 @router.get('/api/truc-de')
 def list_exam_paper_duty(ma_dot: str, admin_user: str = Depends(require_admin)):
     return _model_list_duty(ma_dot=ma_dot)
+
+
+@router.delete('/api/truc-de/all')
+def clear_all_exam_paper_duty(ma_dot: str, admin_user: str = Depends(require_admin)):
+    return _model_clear_all_duty(ma_dot=ma_dot)
+
+
+@router.delete('/api/truc-de/{ma_dot}/{ma_gv}')
+def clear_lecturer_exam_paper_duty(ma_dot: str, ma_gv: str, admin_user: str = Depends(require_admin)):
+    return _model_clear_lecturer_duty(ma_dot=ma_dot, ma_gv=ma_gv)

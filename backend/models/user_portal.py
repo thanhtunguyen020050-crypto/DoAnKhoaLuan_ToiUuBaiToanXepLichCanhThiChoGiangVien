@@ -276,6 +276,24 @@ def my_schedule(ma_gv: str, requesting_ma_gv: str | None = None):
         raise HTTPException(503, 'Không đọc được lịch cá nhân: ' + str(e))
 
 
+def my_calendar_data(ma_gv: str):
+    try:
+        with get_connection() as cn:
+            cur = cn.cursor()
+            _require_identity(cur, ma_gv)
+            cur.execute('''SELECT ID,CONVERT(varchar(10),NgayDay,23) NgayDay,TuTiet,DenTiet,GhiChu
+                           FROM dbo.LichDayGV WHERE MaGV=? ORDER BY NgayDay,TuTiet,DenTiet''', ma_gv)
+            teaching = _rows(cur)
+            cur.execute('''SELECT ID,CONVERT(varchar(10),NgayBan,23) NgayBan,TuTiet,DenTiet,LyDo,UuTien
+                           FROM dbo.LichBanGV WHERE MaGV=? ORDER BY NgayBan,TuTiet,DenTiet''', ma_gv)
+            busy = _rows(cur)
+            return {'teaching': teaching, 'busy': busy}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(503, 'Không đọc được lịch cá nhân: ' + str(e))
+
+
 def all_schedules(requesting_ma_gv: str):
     try:
         with get_connection() as cn:

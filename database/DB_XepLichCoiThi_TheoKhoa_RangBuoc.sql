@@ -109,18 +109,6 @@ CREATE TABLE CauHinhXepLich (
 );
 GO
 
-CREATE TABLE CauHinhCongBoLich (
-    ID TINYINT NOT NULL,
-    ChoPhepXemTatCa BIT NOT NULL CONSTRAINT DF_CauHinhCongBoLich_Enabled DEFAULT 0,
-    CapNhatLuc DATETIME2 NOT NULL CONSTRAINT DF_CauHinhCongBoLich_Updated DEFAULT SYSDATETIME(),
-    NguoiCapNhat NVARCHAR(120) NULL,
-    CONSTRAINT PK_CauHinhCongBoLich PRIMARY KEY (ID),
-    CONSTRAINT CK_CauHinhCongBoLich_Singleton CHECK (ID=1)
-);
-GO
-INSERT INTO CauHinhCongBoLich(ID,ChoPhepXemTatCa) VALUES(1,0);
-GO
-
 /* Lịch dạy cố định: IMPORT từ lịch giảng dạy chính thức. Hard constraint 100%, tuyệt đối không xếp gác trùng. */
 CREATE TABLE LichDayGV (
     ID INT IDENTITY(1,1) NOT NULL,
@@ -208,33 +196,6 @@ CREATE TABLE PhanCongCoiThi (
 );
 GO
 CREATE INDEX IX_PCT_GV ON PhanCongCoiThi(MaGV,MaCa);
-GO
-
-/* Imported exam-paper duty is stored separately from exam invigilation assignments. */
-IF OBJECT_ID(N'dbo.PhanCongTrucDe', N'U') IS NULL
-BEGIN
-    CREATE TABLE dbo.PhanCongTrucDe (
-        ID BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_PhanCongTrucDe PRIMARY KEY,
-        MaDot VARCHAR(20) NOT NULL,
-        MaHP NVARCHAR(30) NOT NULL,
-        MonThi NVARCHAR(300) NOT NULL,
-        NgayThi DATE NOT NULL,
-        Thu NVARCHAR(20) NOT NULL,
-        TuTiet INT NOT NULL,
-        DenTiet INT NOT NULL,
-        MaGV VARCHAR(20) NOT NULL,
-        SoDienThoai NVARCHAR(30) NULL,
-        GhiChu NVARCHAR(255) NULL,
-        NguonFile NVARCHAR(255) NULL,
-        ThoiGianImport DATETIME2 NOT NULL CONSTRAINT DF_PhanCongTrucDe_Time DEFAULT SYSDATETIME(),
-        CONSTRAINT FK_PhanCongTrucDe_Dot FOREIGN KEY(MaDot) REFERENCES dbo.DotThi(MaDot) ON DELETE CASCADE,
-        CONSTRAINT FK_PhanCongTrucDe_GV FOREIGN KEY(MaGV) REFERENCES dbo.GiangVien(MaGV),
-        CONSTRAINT CK_PhanCongTrucDe_Tiet CHECK(TuTiet BETWEEN 1 AND 16 AND DenTiet BETWEEN TuTiet AND 16)
-    );
-END;
-GO
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name=N'UX_PhanCongTrucDe_ImportKey' AND object_id=OBJECT_ID(N'dbo.PhanCongTrucDe'))
-    CREATE UNIQUE INDEX UX_PhanCongTrucDe_ImportKey ON dbo.PhanCongTrucDe(MaDot,MaHP,NgayThi,TuTiet,DenTiet,MaGV);
 GO
 
 
@@ -333,18 +294,16 @@ BEGIN
     IF @MaKhoa IS NOT NULL AND NOT EXISTS(SELECT 1 FROM Khoa WHERE MaKhoa=@MaKhoa)
         THROW 51012,N'Khoa không tồn tại.',1;
 
-    -- DinhMucPhanCong also defines who participates in this exam period.
-    -- Update only that selected set; never add every active lecturer here.
-    IF NOT EXISTS(
-        SELECT 1 FROM DinhMucPhanCong d
-        JOIN GiangVien g ON g.MaGV=d.MaGV
-        JOIN BoMon bm ON bm.MaBoMon=g.MaBoMon
-        WHERE d.MaDot=@MaDot AND g.TrangThai=N'Đang công tác'
-          AND (@MaKhoa IS NULL OR bm.MaKhoa=@MaKhoa)
-    )
-        THROW 51013,N'Đợt thi chưa có giảng viên tham gia trong phạm vi đã chọn.',1;
-
     BEGIN TRAN;
+
+    -- Tạo định mức cho GV chưa có dòng trong đợt; GV đã có thì cập nhật.
+    INSERT DinhMucPhanCong(MaDot,MaGV,TyLeDinhMuc,GhiChu)
+    SELECT @MaDot,g.MaGV,@TyLeDinhMuc,N'Đặt định mức chung'
+    FROM GiangVien g
+    JOIN BoMon bm ON bm.MaBoMon=g.MaBoMon
+    WHERE g.TrangThai=N'Đang công tác'
+      AND (@MaKhoa IS NULL OR bm.MaKhoa=@MaKhoa)
+      AND NOT EXISTS(SELECT 1 FROM DinhMucPhanCong d WHERE d.MaDot=@MaDot AND d.MaGV=g.MaGV);
 
     UPDATE d SET TyLeDinhMuc=@TyLeDinhMuc, GhiChu=N'Đặt định mức chung'
     FROM DinhMucPhanCong d
@@ -424,7 +383,6 @@ BEGIN
  SET NOCOUNT ON; SET XACT_ABORT ON;
  IF NOT EXISTS(SELECT 1 FROM dbo.GiangVien WHERE MaGV=@MaGV) THROW 52204,N'Không tìm thấy giảng viên.',1;
  UPDATE dbo.GiangVien SET TrangThai=N'Ngừng công tác' WHERE MaGV=@MaGV;
- UPDATE dbo.TaiKhoanGiangVien SET IsActive=0 WHERE MaGV=@MaGV;
  SELECT MaGV,HoTen,MaBoMon,TrangThai FROM dbo.GiangVien WHERE MaGV=@MaGV;
 END;
 GO
@@ -914,8 +872,8 @@ BEGIN
     DECLARE @TyLeToiThieu DECIMAL(5,2)=(SELECT TyLeNeLichBanToiThieu FROM dbo.CauHinhXepLich WHERE MaDot=@MaDot);
     IF @N>0 OR @ThieuCa>0 OR @NgoaiDinhMuc>0
         THROW 53001,N'Không thể chốt: RB1-RB6 chưa đạt.',1;
-    IF @TyLeNeLichBan<@TyLeToiThieu
-        THROW 53005,N'Tỷ lệ né lịch bận mức 2-3 thấp hơn ngưỡng tối thiểu của đợt thi.',1;
+    -- Busy levels 2-3 are soft optimization criteria. Report their rate,
+    -- but do not block publishing a schedule that satisfies the hard rules.
     SELECT @MaDot MaDot,N'ĐẠT - có thể chốt lịch' KetQua,@TyLeNeLichBan TyLeNeLichBan,@TyLeToiThieu TyLeNeToiThieu;
 END;
 GO
@@ -1069,7 +1027,7 @@ BEGIN
         CONSTRAINT FK_YCBB_GVThayThe FOREIGN KEY (MaGVThayTheDeNghi)
             REFERENCES dbo.GiangVien(MaGV),
         CONSTRAINT CK_YCBB_ThoiGian CHECK (ThoiGianBatDauBan < ThoiGianKetThucBan),
-        CONSTRAINT CK_YCBB_TrangThai CHECK (TrangThai IN ('PENDING','APPROVED','REJECTED','WITHDRAWN'))
+        CONSTRAINT CK_YCBB_TrangThai CHECK (TrangThai IN ('PENDING','APPROVED','REJECTED'))
     );
 END;
 GO
@@ -1077,21 +1035,6 @@ GO
 /* Bổ sung cột cho database đã có bảng YeuCauBaoBan từ phiên bản cũ. */
 IF COL_LENGTH(N'dbo.YeuCauBaoBan', N'MaGVThayTheDeNghi') IS NULL
     ALTER TABLE dbo.YeuCauBaoBan ADD MaGVThayTheDeNghi VARCHAR(20) NULL;
-GO
-
-/* Người được nhờ xác nhận trước khi yêu cầu được chuyển đến Admin. */
-IF COL_LENGTH(N'dbo.YeuCauBaoBan', N'TrangThaiXacNhanThayThe') IS NULL
-    ALTER TABLE dbo.YeuCauBaoBan ADD TrangThaiXacNhanThayThe VARCHAR(20) NULL;
-IF COL_LENGTH(N'dbo.YeuCauBaoBan', N'ThoiGianPhanHoiThayThe') IS NULL
-    ALTER TABLE dbo.YeuCauBaoBan ADD ThoiGianPhanHoiThayThe DATETIME2 NULL;
-GO
-
-/* Các lời mời cũ vẫn chờ người được nhờ phản hồi theo quy trình mới. */
-UPDATE dbo.YeuCauBaoBan
-SET TrangThaiXacNhanThayThe = 'PENDING'
-WHERE MaGVThayTheDeNghi IS NOT NULL
-  AND TrangThai = 'PENDING'
-  AND TrangThaiXacNhanThayThe IS NULL;
 GO
 
 IF NOT EXISTS (
@@ -1205,6 +1148,7 @@ BEGIN
 
         DECLARE @MaCa TABLE (MaCa VARCHAR(50) NOT NULL PRIMARY KEY);
         DECLARE @YeuCauDoiCa TABLE (ID BIGINT NOT NULL PRIMARY KEY);
+        DECLARE @YeuCauBaoBan TABLE (ID BIGINT NOT NULL PRIMARY KEY);
         DECLARE @SoCaDaXoa INT;
 
         INSERT INTO @MaCa(MaCa)
@@ -1212,15 +1156,20 @@ BEGIN
 
         SELECT @SoCaDaXoa=COUNT(*) FROM @MaCa;
 
+        INSERT INTO @YeuCauBaoBan(ID)
+        SELECT MaYeuCau FROM dbo.YeuCauBaoBan;
+
         INSERT INTO @YeuCauDoiCa(ID)
         SELECT yc.ID
-        FROM dbo.YeuCauDoiCa AS yc
-        WHERE EXISTS (SELECT 1 FROM @MaCa AS ca WHERE ca.MaCa=yc.MaCaGui)
-           OR EXISTS (SELECT 1 FROM @MaCa AS ca WHERE ca.MaCa=yc.MaCaNhan);
+        FROM dbo.YeuCauDoiCa AS yc;
 
         DELETE tb
         FROM dbo.ThongBao AS tb
         INNER JOIN @YeuCauDoiCa AS yc ON yc.ID=tb.YeuCauDoiCaID;
+
+        DELETE tb
+        FROM dbo.ThongBao AS tb
+        INNER JOIN @YeuCauBaoBan AS yc ON yc.ID=tb.YeuCauBaoBanID;
 
         DELETE ls
         FROM dbo.LichSuDoiCa AS ls
@@ -1232,12 +1181,12 @@ BEGIN
 
         DELETE ls
         FROM dbo.LichSuDieuChinhLich AS ls
-        INNER JOIN @MaCa AS ca ON ca.MaCa=ls.MaCa;
+        WHERE EXISTS (SELECT 1 FROM @YeuCauBaoBan AS yc WHERE yc.ID=ls.MaYeuCau)
+           OR EXISTS (SELECT 1 FROM @MaCa AS ca WHERE ca.MaCa=ls.MaCa);
 
-        UPDATE yc
-           SET MaCa=NULL
+        DELETE yc
         FROM dbo.YeuCauBaoBan AS yc
-        INNER JOIN @MaCa AS ca ON ca.MaCa=yc.MaCa;
+        INNER JOIN @YeuCauBaoBan AS x ON x.ID=yc.MaYeuCau;
 
         DELETE pc
         FROM dbo.PhanCongCoiThi AS pc
@@ -1261,6 +1210,26 @@ GO
 
 PRINT N'Đã tạo dbo.sp_XoaTatCaCaThi. Chưa xóa dữ liệu; thủ tục chạy khi bấm Xóa toàn bộ ca thi.';
 GO
+IF OBJECT_ID(N'dbo.YeuCauBaoBan', N'U') IS NULL
+    THROW 50001, N'Không tìm thấy bảng dbo.YeuCauBaoBan. Hãy cài database chính trước.', 1;
+GO
+
+IF COL_LENGTH(N'dbo.YeuCauBaoBan', N'TrangThaiXacNhanThayThe') IS NULL
+    ALTER TABLE dbo.YeuCauBaoBan ADD TrangThaiXacNhanThayThe VARCHAR(20) NULL;
+IF COL_LENGTH(N'dbo.YeuCauBaoBan', N'ThoiGianPhanHoiThayThe') IS NULL
+    ALTER TABLE dbo.YeuCauBaoBan ADD ThoiGianPhanHoiThayThe DATETIME2 NULL;
+GO
+
+/* Lời mời đang mở được đưa về trạng thái chờ phản hồi. */
+UPDATE dbo.YeuCauBaoBan
+SET TrangThaiXacNhanThayThe = 'PENDING'
+WHERE MaGVThayTheDeNghi IS NOT NULL
+  AND TrangThai = 'PENDING'
+  AND TrangThaiXacNhanThayThe IS NULL;
+GO
+
+SELECT N'Migration luồng nhờ coi thay đã sẵn sàng.' AS KetQua;
+GO
 
 GO
 
@@ -1280,22 +1249,568 @@ GO
 IF NOT EXISTS (SELECT 1 FROM dbo.CauHinhCongBoLich WHERE ID=1)
     INSERT INTO dbo.CauHinhCongBoLich(ID,ChoPhepXemTatCa) VALUES(1,0);
 GO
-IF OBJECT_ID(N'dbo.YeuCauBaoBan', N'U') IS NULL
-    THROW 50001, N'Không tìm thấy bảng dbo.YeuCauBaoBan trong database hiện tại.', 1;
+/* 1. Bảng trực đề */
+IF OBJECT_ID(N'dbo.PhanCongTrucDe', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.PhanCongTrucDe (
+        ID BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_PhanCongTrucDe PRIMARY KEY,
+        MaDot VARCHAR(20) NOT NULL,
+        MaHP NVARCHAR(30) NOT NULL,
+        MonThi NVARCHAR(300) NOT NULL,
+        NgayThi DATE NOT NULL,
+        Thu NVARCHAR(20) NOT NULL,
+        TuTiet INT NOT NULL,
+        DenTiet INT NOT NULL,
+        MaGV VARCHAR(20) NOT NULL,
+        SoDienThoai NVARCHAR(30) NULL,
+        GhiChu NVARCHAR(255) NULL,
+        NguonFile NVARCHAR(255) NULL,
+        ThoiGianImport DATETIME2 NOT NULL CONSTRAINT DF_PhanCongTrucDe_Time DEFAULT SYSDATETIME(),
+        CONSTRAINT FK_PhanCongTrucDe_Dot FOREIGN KEY(MaDot) REFERENCES dbo.DotThi(MaDot) ON DELETE CASCADE,
+        CONSTRAINT FK_PhanCongTrucDe_GV FOREIGN KEY(MaGV) REFERENCES dbo.GiangVien(MaGV),
+        CONSTRAINT CK_PhanCongTrucDe_Tiet CHECK(TuTiet BETWEEN 1 AND 16 AND DenTiet BETWEEN TuTiet AND 16)
+    );
+END;
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name=N'UX_PhanCongTrucDe_ImportKey' AND object_id=OBJECT_ID(N'dbo.PhanCongTrucDe'))
+    CREATE UNIQUE INDEX UX_PhanCongTrucDe_ImportKey ON dbo.PhanCongTrucDe(MaDot,MaHP,NgayThi,TuTiet,DenTiet,MaGV);
 GO
 
-IF EXISTS (
-    SELECT 1
-    FROM sys.check_constraints
-    WHERE parent_object_id = OBJECT_ID(N'dbo.YeuCauBaoBan')
-      AND name = N'CK_YCBB_TrangThai'
-)
+/* 2. sp_DatDinhMucChung bản mới */
+CREATE OR ALTER PROCEDURE dbo.sp_DatDinhMucChung
+    @MaDot VARCHAR(20),
+    @TyLeDinhMuc DECIMAL(5,2),
+    @MaKhoa VARCHAR(20)=NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    IF @TyLeDinhMuc NOT BETWEEN 0 AND 100
+        THROW 51010,N'Tỷ lệ định mức chung phải từ 0 đến 100%.',1;
+    IF NOT EXISTS(SELECT 1 FROM DotThi WHERE MaDot=@MaDot)
+        THROW 51011,N'Đợt thi không tồn tại.',1;
+    IF @MaKhoa IS NOT NULL AND NOT EXISTS(SELECT 1 FROM Khoa WHERE MaKhoa=@MaKhoa)
+        THROW 51012,N'Khoa không tồn tại.',1;
+
+    IF NOT EXISTS(
+        SELECT 1 FROM DinhMucPhanCong d
+        JOIN GiangVien g ON g.MaGV=d.MaGV
+        JOIN BoMon bm ON bm.MaBoMon=g.MaBoMon
+        WHERE d.MaDot=@MaDot AND g.TrangThai=N'Đang công tác'
+          AND (@MaKhoa IS NULL OR bm.MaKhoa=@MaKhoa)
+    )
+        THROW 51013,N'Đợt thi chưa có giảng viên tham gia trong phạm vi đã chọn.',1;
+
+    BEGIN TRAN;
+
+    UPDATE d SET TyLeDinhMuc=@TyLeDinhMuc, GhiChu=N'Đặt định mức chung'
+    FROM DinhMucPhanCong d
+    JOIN GiangVien g ON g.MaGV=d.MaGV
+    JOIN BoMon bm ON bm.MaBoMon=g.MaBoMon
+    WHERE d.MaDot=@MaDot
+      AND g.TrangThai=N'Đang công tác'
+      AND (@MaKhoa IS NULL OR bm.MaKhoa=@MaKhoa);
+
+    EXEC dbo.sp_TinhDinhMucTheoTyLe @MaDot;
+
+    COMMIT;
+
+    SELECT @MaDot AS MaDot,
+           (SELECT ISNULL(SUM(SoGVCanCap),0) FROM CaThi WHERE MaDot=@MaDot) AS TongNhuCau,
+           (SELECT ISNULL(SUM(SoCaQuyDinh),0) FROM DinhMucPhanCong WHERE MaDot=@MaDot) AS TongDinhMuc,
+           (SELECT ISNULL(SUM(SoGVCanCap),0) FROM CaThi WHERE MaDot=@MaDot)
+             - (SELECT ISNULL(SUM(SoCaQuyDinh),0) FROM DinhMucPhanCong WHERE MaDot=@MaDot) AS ChenhLech;
+END;
+GO
+
+/* 3. sp_XoaGiangVien bản mới */
+CREATE OR ALTER PROCEDURE dbo.sp_XoaGiangVien @MaGV VARCHAR(20)
+AS
+BEGIN
+ SET NOCOUNT ON; SET XACT_ABORT ON;
+ IF NOT EXISTS(SELECT 1 FROM dbo.GiangVien WHERE MaGV=@MaGV) THROW 52204,N'Không tìm thấy giảng viên.',1;
+ UPDATE dbo.GiangVien SET TrangThai=N'Ngừng công tác' WHERE MaGV=@MaGV;
+ UPDATE dbo.TaiKhoanGiangVien SET IsActive=0 WHERE MaGV=@MaGV;
+ SELECT MaGV,HoTen,MaBoMon,TrangThai FROM dbo.GiangVien WHERE MaGV=@MaGV;
+END;
+GO
+
+/* 4. Thêm trạng thái WITHDRAWN */
+IF EXISTS (SELECT 1 FROM sys.check_constraints
+           WHERE parent_object_id=OBJECT_ID(N'dbo.YeuCauBaoBan') AND name=N'CK_YCBB_TrangThai')
     ALTER TABLE dbo.YeuCauBaoBan DROP CONSTRAINT CK_YCBB_TrangThai;
 GO
-
 ALTER TABLE dbo.YeuCauBaoBan
     ADD CONSTRAINT CK_YCBB_TrangThai
     CHECK (TrangThai IN ('PENDING','APPROVED','REJECTED','WITHDRAWN'));
 GO
+/*
+   Exact quotas and approved cover-transfer support.
+   Apply after the base install script creates DB_XepLichCoiThi_Final.
+   Assignment counts must exactly equal the stored quota plus the net of
+   effective, admin-approved cover transfers for the current schedule.
+*/
+USE [DB_XepLichCoiThi_Final];
+GO
 
+IF OBJECT_ID(N'dbo.PhanCongCoiThi', N'U') IS NULL
+    THROW 53010, N'Không tìm thấy dbo.PhanCongCoiThi trong DB_XepLichCoiThi_Final. Hãy kiểm tra đã chạy script cài đặt đúng database chưa.', 1;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.sp_KiemTraRangBuoc
+    @MaDot VARCHAR(20),
+    @ThrowIfFail BIT=0
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF NOT EXISTS(SELECT 1 FROM dbo.DotThi WHERE MaDot=@MaDot)
+        THROW 53000,N'Đợt thi không tồn tại.',1;
+
+    CREATE TABLE #QuotaState (
+        MaGV VARCHAR(20) COLLATE DATABASE_DEFAULT NOT NULL PRIMARY KEY,
+        SoCaCanXep INT NOT NULL,
+        SoCaThucTe INT NOT NULL
+    );
+
+    ;WITH ApprovedHistory AS (
+        SELECT ls.MaLichSu,ls.MaCa,ls.MaGV,ls.MaGVThayThe,
+               ROW_NUMBER() OVER(PARTITION BY ls.MaCa ORDER BY ls.MaLichSu DESC) AS RN
+        FROM dbo.LichSuDieuChinhLich ls
+        JOIN dbo.YeuCauBaoBan y ON y.MaYeuCau=ls.MaYeuCau AND y.TrangThai='APPROVED'
+        JOIN dbo.CaThi c ON c.MaCa=ls.MaCa AND c.MaDot=@MaDot
+        WHERE ls.HanhDong=N'DUYET_DOI_LICH'
+          AND ls.MaGV IS NOT NULL AND ls.MaGVThayThe IS NOT NULL
+    ), EffectiveCovers AS (
+        SELECT h.MaCa,h.MaLichSu
+        FROM ApprovedHistory h
+        WHERE h.RN=1 AND EXISTS (
+            SELECT 1 FROM dbo.PhanCongCoiThi p
+            WHERE p.MaCa=h.MaCa AND p.MaGV=h.MaGVThayThe
+        )
+    ), TransferRows AS (
+        SELECT c.MaDot,h.MaGV AS MaGVTruoc,h.MaGVThayThe AS MaGVSau
+        FROM dbo.LichSuDieuChinhLich h
+        JOIN dbo.YeuCauBaoBan y ON y.MaYeuCau=h.MaYeuCau AND y.TrangThai='APPROVED'
+        JOIN dbo.CaThi c ON c.MaCa=h.MaCa AND c.MaDot=@MaDot
+        JOIN EffectiveCovers e ON e.MaCa=h.MaCa AND h.MaLichSu<=e.MaLichSu
+        WHERE h.HanhDong=N'DUYET_DOI_LICH'
+          AND h.MaGV IS NOT NULL AND h.MaGVThayThe IS NOT NULL
+    ), TransferDelta AS (
+        SELECT MaDot,MaGV,SUM(Delta) AS Delta
+        FROM (
+            SELECT MaDot,MaGVTruoc AS MaGV,-1 AS Delta FROM TransferRows
+            UNION ALL
+            SELECT MaDot,MaGVSau AS MaGV,1 AS Delta FROM TransferRows
+        ) d
+        GROUP BY MaDot,MaGV
+    ), LecturerScope AS (
+        SELECT MaGV FROM dbo.DinhMucPhanCong WHERE MaDot=@MaDot
+        UNION SELECT p.MaGV FROM dbo.PhanCongCoiThi p JOIN dbo.CaThi c ON c.MaCa=p.MaCa WHERE c.MaDot=@MaDot
+        UNION SELECT MaGVTruoc FROM TransferRows
+        UNION SELECT MaGVSau FROM TransferRows
+    ), AssignmentCounts AS (
+        SELECT p.MaGV,COUNT(*) AS SoCa
+        FROM dbo.PhanCongCoiThi p JOIN dbo.CaThi c ON c.MaCa=p.MaCa
+        WHERE c.MaDot=@MaDot
+        GROUP BY p.MaGV
+    )
+    INSERT INTO #QuotaState(MaGV,SoCaCanXep,SoCaThucTe)
+    SELECT s.MaGV,ISNULL(d.SoCaQuyDinh,0)+ISNULL(td.Delta,0),ISNULL(a.SoCa,0)
+    FROM LecturerScope s
+    LEFT JOIN dbo.DinhMucPhanCong d ON d.MaDot=@MaDot AND d.MaGV=s.MaGV
+    LEFT JOIN TransferDelta td ON td.MaGV=s.MaGV AND td.MaDot=@MaDot
+    LEFT JOIN AssignmentCounts a ON a.MaGV=s.MaGV;
+
+    DECLARE @RB TABLE(MaRB NVARCHAR(10) PRIMARY KEY,TenRangBuoc NVARCHAR(200),SoViPham INT);
+    INSERT @RB VALUES
+        (N'RB1',N'Khớp tuyệt đối định mức và đổi ca đã duyệt',0),
+        (N'RB2',N'Mỗi ca đúng số GV cần cấp',0),
+        (N'RB3',N'GV không coi 2 ca trùng thời gian',0),
+        (N'RB4',N'GV không trùng lịch dạy',0),
+        (N'RB5',N'Không trộn nhóm ca trong buổi',0),
+        (N'RB6',N'Né lịch bận mức 1',0);
+
+    UPDATE @RB SET SoViPham=(SELECT COUNT(*) FROM #QuotaState WHERE SoCaThucTe<>SoCaCanXep)
+        WHERE MaRB=N'RB1';
+    UPDATE @RB SET SoViPham=(SELECT COUNT(*) FROM dbo.CaThi c
+        WHERE c.MaDot=@MaDot AND (SELECT COUNT(*) FROM dbo.PhanCongCoiThi p WHERE p.MaCa=c.MaCa)<>c.SoGVCanCap)
+        WHERE MaRB=N'RB2';
+    UPDATE r SET SoViPham=x.SoViPham
+    FROM @RB r
+    CROSS APPLY (SELECT COUNT(*) SoViPham FROM dbo.vw_ViPhamRangBuocCung v
+                 WHERE v.MaDot=@MaDot AND v.MaRB=r.MaRB) x
+    WHERE r.MaRB IN(N'RB3',N'RB4',N'RB5',N'RB6');
+
+    SELECT MaRB,TenRangBuoc,SoViPham,
+           CASE WHEN SoViPham=0 THEN CAST(100.00 AS DECIMAL(5,2)) ELSE CAST(0.00 AS DECIMAL(5,2)) END AS PhanTramDat,
+           CASE WHEN SoViPham=0 THEN N'ĐẠT 100%' ELSE N'VI PHẠM' END AS KetQua
+    FROM @RB ORDER BY MaRB;
+
+    SELECT MaRB,LoaiViPham,MaGV,MaCa,MaCaLienQuan,MoTa
+    FROM dbo.vw_ViPhamRangBuocCung
+    WHERE MaDot=@MaDot AND MaRB<>N'RB1'
+    UNION ALL
+    SELECT N'RB1',N'Không khớp định mức chính xác',q.MaGV,NULL,NULL,
+           CONCAT(N'GV ',q.MaGV,N' có ',q.SoCaThucTe,N' ca; định mức hiệu lực cần đúng ',q.SoCaCanXep,N' ca.')
+    FROM #QuotaState q
+    WHERE q.SoCaThucTe<>q.SoCaCanXep
+    UNION ALL
+    SELECT N'RB2',N'Thiếu GV',NULL,c.MaCa,NULL,
+           CONCAT(N'Ca ',c.MaCa,N' có ',(SELECT COUNT(*) FROM dbo.PhanCongCoiThi p WHERE p.MaCa=c.MaCa),N'/',c.SoGVCanCap,N' GV')
+    FROM dbo.CaThi c
+    WHERE c.MaDot=@MaDot AND (SELECT COUNT(*) FROM dbo.PhanCongCoiThi p WHERE p.MaCa=c.MaCa)<>c.SoGVCanCap
+    ORDER BY MaRB,MaGV,MaCa;
+
+    IF @ThrowIfFail=1 AND EXISTS(SELECT 1 FROM @RB WHERE SoViPham>0)
+        THROW 53004,N'Ràng buộc cứng RB1-RB6 chưa đạt. Lịch chưa được chốt.',1;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.sp_ChotXepLich @MaDot VARCHAR(20)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF NOT EXISTS(SELECT 1 FROM dbo.DotThi WHERE MaDot=@MaDot)
+        THROW 53000,N'Đợt thi không tồn tại.',1;
+
+    CREATE TABLE #QuotaState (
+        MaGV VARCHAR(20) COLLATE DATABASE_DEFAULT NOT NULL PRIMARY KEY,
+        SoCaCanXep INT NOT NULL,
+        SoCaThucTe INT NOT NULL
+    );
+    ;WITH ApprovedHistory AS (
+        SELECT ls.MaLichSu,ls.MaCa,ls.MaGV,ls.MaGVThayThe,
+               ROW_NUMBER() OVER(PARTITION BY ls.MaCa ORDER BY ls.MaLichSu DESC) AS RN
+        FROM dbo.LichSuDieuChinhLich ls
+        JOIN dbo.YeuCauBaoBan y ON y.MaYeuCau=ls.MaYeuCau AND y.TrangThai='APPROVED'
+        JOIN dbo.CaThi c ON c.MaCa=ls.MaCa AND c.MaDot=@MaDot
+        WHERE ls.HanhDong=N'DUYET_DOI_LICH'
+          AND ls.MaGV IS NOT NULL AND ls.MaGVThayThe IS NOT NULL
+    ), EffectiveCovers AS (
+        SELECT h.MaCa,h.MaLichSu
+        FROM ApprovedHistory h
+        WHERE h.RN=1 AND EXISTS (
+            SELECT 1 FROM dbo.PhanCongCoiThi p
+            WHERE p.MaCa=h.MaCa AND p.MaGV=h.MaGVThayThe
+        )
+    ), TransferRows AS (
+        SELECT c.MaDot,h.MaGV AS MaGVTruoc,h.MaGVThayThe AS MaGVSau
+        FROM dbo.LichSuDieuChinhLich h
+        JOIN dbo.YeuCauBaoBan y ON y.MaYeuCau=h.MaYeuCau AND y.TrangThai='APPROVED'
+        JOIN dbo.CaThi c ON c.MaCa=h.MaCa AND c.MaDot=@MaDot
+        JOIN EffectiveCovers e ON e.MaCa=h.MaCa AND h.MaLichSu<=e.MaLichSu
+        WHERE h.HanhDong=N'DUYET_DOI_LICH'
+          AND h.MaGV IS NOT NULL AND h.MaGVThayThe IS NOT NULL
+    ), TransferDelta AS (
+        SELECT MaDot,MaGV,SUM(Delta) AS Delta
+        FROM (
+            SELECT MaDot,MaGVTruoc AS MaGV,-1 AS Delta FROM TransferRows
+            UNION ALL
+            SELECT MaDot,MaGVSau AS MaGV,1 AS Delta FROM TransferRows
+        ) d
+        GROUP BY MaDot,MaGV
+    ), LecturerScope AS (
+        SELECT MaGV FROM dbo.DinhMucPhanCong WHERE MaDot=@MaDot
+        UNION SELECT p.MaGV FROM dbo.PhanCongCoiThi p JOIN dbo.CaThi c ON c.MaCa=p.MaCa WHERE c.MaDot=@MaDot
+        UNION SELECT MaGVTruoc FROM TransferRows
+        UNION SELECT MaGVSau FROM TransferRows
+    ), AssignmentCounts AS (
+        SELECT p.MaGV,COUNT(*) AS SoCa
+        FROM dbo.PhanCongCoiThi p JOIN dbo.CaThi c ON c.MaCa=p.MaCa
+        WHERE c.MaDot=@MaDot
+        GROUP BY p.MaGV
+    )
+    INSERT INTO #QuotaState(MaGV,SoCaCanXep,SoCaThucTe)
+    SELECT s.MaGV,ISNULL(d.SoCaQuyDinh,0)+ISNULL(td.Delta,0),ISNULL(a.SoCa,0)
+    FROM LecturerScope s
+    LEFT JOIN dbo.DinhMucPhanCong d ON d.MaDot=@MaDot AND d.MaGV=s.MaGV
+    LEFT JOIN TransferDelta td ON td.MaGV=s.MaGV AND td.MaDot=@MaDot
+    LEFT JOIN AssignmentCounts a ON a.MaGV=s.MaGV;
+
+    DECLARE @N INT=(SELECT COUNT(*) FROM dbo.vw_ViPhamRangBuocCung
+                     WHERE MaDot=@MaDot AND MaRB<>N'RB1');
+    DECLARE @ThieuCa INT=(SELECT COUNT(*) FROM dbo.CaThi c WHERE c.MaDot=@MaDot AND
+        (SELECT COUNT(*) FROM dbo.PhanCongCoiThi p WHERE p.MaCa=c.MaCa)<>c.SoGVCanCap);
+    DECLARE @NgoaiDinhMuc INT=(SELECT COUNT(*) FROM #QuotaState WHERE SoCaThucTe<>SoCaCanXep);
+    DECLARE @TongCa INT=(SELECT COUNT(*) FROM dbo.PhanCongCoiThi p JOIN dbo.CaThi c ON c.MaCa=p.MaCa WHERE c.MaDot=@MaDot);
+    DECLARE @CaTrungLichBan INT=(SELECT COUNT(*) FROM dbo.PhanCongCoiThi p JOIN dbo.CaThi c ON c.MaCa=p.MaCa
+        WHERE c.MaDot=@MaDot AND EXISTS(SELECT 1 FROM dbo.LichBanGV b WHERE b.MaGV=p.MaGV AND b.UuTien IN(2,3)
+            AND b.NgayBan=c.NgayThi AND c.TuTiet<=b.DenTiet AND b.TuTiet<=c.DenTiet));
+    DECLARE @TyLeNeLichBan DECIMAL(5,2)=CASE WHEN @TongCa=0 THEN 100.00 ELSE 100.0*(@TongCa-@CaTrungLichBan)/@TongCa END;
+    DECLARE @TyLeToiThieu DECIMAL(5,2)=(SELECT TyLeNeLichBanToiThieu FROM dbo.CauHinhXepLich WHERE MaDot=@MaDot);
+    IF @N>0 OR @ThieuCa>0 OR @NgoaiDinhMuc>0
+        THROW 53001,N'Không thể chốt: ràng buộc cứng chưa đạt.',1;
+    -- Busy levels 2-3 are soft optimization criteria. Report their rate,
+    -- but do not block publishing a schedule that satisfies the hard rules.
+    SELECT @MaDot MaDot,N'ĐẠT - có thể chốt lịch' KetQua,@TyLeNeLichBan TyLeNeLichBan,@TyLeToiThieu TyLeNeToiThieu;
+END;
+GO
+
+/*
+   During an approved swap the history and request status are written before
+   the assignment update in the same transaction. This trigger keeps the
+   other existing hard checks and rejects only quota over-assignment here;
+   exact (including under-assignment) is checked after the complete batch by
+   sp_KiemTraRangBuoc/sp_ChotXepLich.
+*/
+CREATE OR ALTER TRIGGER dbo.trg_PhanCong_RangBuocCung ON dbo.PhanCongCoiThi AFTER INSERT,UPDATE
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DECLARE @Loi NVARCHAR(1000);
+    SELECT TOP 1 @Loi=CONCAT(N'[',v.MaRB,N'] ',v.MoTa)
+    FROM dbo.vw_ViPhamRangBuocCung v
+    WHERE v.MaRB IN(N'RB2',N'RB3',N'RB4',N'RB5',N'RB6')
+      AND ((v.MaGV IN(SELECT MaGV FROM inserted))
+        OR (v.MaGV IN(SELECT MaGV FROM deleted))
+        OR (v.MaCa IN(SELECT MaCa FROM inserted))
+        OR (v.MaCaLienQuan IN(SELECT MaCa FROM inserted)));
+    IF @Loi IS NOT NULL BEGIN ROLLBACK; THROW 53002,@Loi,1; END;
+
+    ;WITH ApprovedHistory AS (
+        SELECT ls.MaLichSu,ls.MaCa,ls.MaGV,ls.MaGVThayThe,
+               ROW_NUMBER() OVER(PARTITION BY ls.MaCa ORDER BY ls.MaLichSu DESC) AS RN
+        FROM dbo.LichSuDieuChinhLich ls
+        JOIN dbo.YeuCauBaoBan y ON y.MaYeuCau=ls.MaYeuCau AND y.TrangThai='APPROVED'
+        WHERE ls.HanhDong=N'DUYET_DOI_LICH'
+          AND ls.MaGV IS NOT NULL AND ls.MaGVThayThe IS NOT NULL
+    ), EffectiveCovers AS (
+        SELECT h.MaCa,h.MaLichSu
+        FROM ApprovedHistory h
+        WHERE h.RN=1 AND EXISTS (
+            SELECT 1 FROM dbo.PhanCongCoiThi p
+            WHERE p.MaCa=h.MaCa AND p.MaGV=h.MaGVThayThe
+        )
+    ), TransferRows AS (
+        SELECT c.MaDot,h.MaGV AS MaGVTruoc,h.MaGVThayThe AS MaGVSau
+        FROM dbo.LichSuDieuChinhLich h
+        JOIN dbo.YeuCauBaoBan y ON y.MaYeuCau=h.MaYeuCau AND y.TrangThai='APPROVED'
+        JOIN dbo.CaThi c ON c.MaCa=h.MaCa
+        JOIN EffectiveCovers e ON e.MaCa=h.MaCa AND h.MaLichSu<=e.MaLichSu
+        WHERE h.HanhDong=N'DUYET_DOI_LICH'
+          AND h.MaGV IS NOT NULL AND h.MaGVThayThe IS NOT NULL
+    ), TransferDelta AS (
+        SELECT MaDot,MaGV,SUM(Delta) AS Delta
+        FROM (
+            SELECT MaDot,MaGVTruoc AS MaGV,-1 AS Delta FROM TransferRows
+            UNION ALL
+            SELECT MaDot,MaGVSau AS MaGV,1 AS Delta FROM TransferRows
+        ) d
+        GROUP BY MaDot,MaGV
+    ), ChangedAssignments AS (
+        SELECT i.MaGV,c.MaDot FROM inserted i JOIN dbo.CaThi c ON c.MaCa=i.MaCa
+        UNION
+        SELECT d.MaGV,c.MaDot FROM deleted d JOIN dbo.CaThi c ON c.MaCa=d.MaCa
+    ), AffectedPeriods AS (
+        SELECT DISTINCT MaDot FROM ChangedAssignments
+    ), AssignmentCounts AS (
+        SELECT p.MaGV,c.MaDot,COUNT(*) AS SoCa
+        FROM dbo.PhanCongCoiThi p JOIN dbo.CaThi c ON c.MaCa=p.MaCa
+        WHERE EXISTS (SELECT 1 FROM AffectedPeriods x WHERE x.MaDot=c.MaDot)
+        GROUP BY p.MaGV,c.MaDot
+    ), LecturerScope AS (
+        SELECT d.MaGV,d.MaDot
+        FROM dbo.DinhMucPhanCong d
+        JOIN AffectedPeriods a ON a.MaDot=d.MaDot
+        UNION SELECT MaGV,MaDot FROM ChangedAssignments
+        UNION SELECT MaGV,MaDot FROM TransferDelta
+    ), Expected AS (
+        SELECT s.MaGV,s.MaDot,ISNULL(d.SoCaQuyDinh,0)+ISNULL(td.Delta,0) AS SoCaCanXep
+        FROM LecturerScope s
+        LEFT JOIN dbo.DinhMucPhanCong d ON d.MaGV=s.MaGV AND d.MaDot=s.MaDot
+        LEFT JOIN TransferDelta td ON td.MaGV=s.MaGV AND td.MaDot=s.MaDot
+    )
+    SELECT TOP 1 @Loi=CONCAT(N'[RB1] GV ',g.MaGV,N' vượt định mức hiệu lực ',e.SoCaCanXep,N' ca.')
+    FROM ChangedAssignments g
+    JOIN Expected e ON e.MaGV=g.MaGV AND e.MaDot=g.MaDot
+    LEFT JOIN AssignmentCounts a ON a.MaGV=g.MaGV AND a.MaDot=g.MaDot
+    WHERE ISNULL(a.SoCa,0)>e.SoCaCanXep;
+    IF @Loi IS NOT NULL BEGIN ROLLBACK; THROW 53002,@Loi,1; END;
+END;
+GO
+IF COL_LENGTH('dbo.DinhMucPhanCong', 'SoCaThuCong') IS NULL
+BEGIN
+    ALTER TABLE dbo.DinhMucPhanCong
+        ADD SoCaThuCong BIT NOT NULL
+            CONSTRAINT DF_DM_SoCaThuCong DEFAULT (0) WITH VALUES;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.sp_TinhDinhMucTheoTyLe @MaDot VARCHAR(20)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @TongNhuCau INT = 0,
+            @TongCaThuCong INT = 0,
+            @TongTyLe DECIMAL(18,6) = 0,
+            @ConLai INT = 0,
+            @ConDu INT = 0;
+
+    SELECT @TongNhuCau = ISNULL(SUM(SoGVCanCap), 0)
+    FROM dbo.CaThi
+    WHERE MaDot = @MaDot;
+
+    SELECT @TongCaThuCong = ISNULL(SUM(d.SoCaQuyDinh), 0)
+    FROM dbo.DinhMucPhanCong d
+    JOIN dbo.GiangVien g ON g.MaGV = d.MaGV
+    WHERE d.MaDot = @MaDot
+      AND d.SoCaThuCong = 1
+      AND g.TrangThai = N'Đang công tác';
+
+    IF @TongCaThuCong > @TongNhuCau
+        THROW 51004, N'Tổng số ca định mức nhập tay vượt quá tổng nhu cầu của đợt thi.', 1;
+
+    SET @ConLai = @TongNhuCau - @TongCaThuCong;
+
+    IF @TongNhuCau = 0
+    BEGIN
+        IF @TongCaThuCong > 0
+            THROW 51004, N'Không thể giữ định mức nhập tay khi đợt thi chưa có nhu cầu ca.', 1;
+
+        UPDATE dbo.DinhMucPhanCong
+        SET SoCaQuyDinh = 0
+        WHERE MaDot = @MaDot AND SoCaThuCong = 0;
+
+        SELECT d.MaDot, d.MaGV, g.HoTen, d.TyLeDinhMuc,
+               d.SoCaQuyDinh, d.SoCaThuCong
+        FROM dbo.DinhMucPhanCong d
+        JOIN dbo.GiangVien g ON g.MaGV = d.MaGV
+        WHERE d.MaDot = @MaDot
+        ORDER BY d.TyLeDinhMuc DESC, d.MaGV;
+        RETURN;
+    END;
+
+    SELECT @TongTyLe = ISNULL(SUM(d.TyLeDinhMuc), 0)
+    FROM dbo.DinhMucPhanCong d
+    JOIN dbo.GiangVien g ON g.MaGV = d.MaGV
+    WHERE d.MaDot = @MaDot
+      AND d.SoCaThuCong = 0
+      AND g.TrangThai = N'Đang công tác';
+
+    IF @ConLai > 0 AND @TongTyLe <= 0
+        THROW 51001, N'Tổng tỷ lệ định mức của giảng viên chưa khóa phải lớn hơn 0.', 1;
+
+    IF @ConLai = 0
+    BEGIN
+        UPDATE dbo.DinhMucPhanCong
+        SET SoCaQuyDinh = 0
+        WHERE MaDot = @MaDot AND SoCaThuCong = 0;
+    END
+    ELSE
+    BEGIN
+        CREATE TABLE #Q(
+            MaGV VARCHAR(20) COLLATE DATABASE_DEFAULT PRIMARY KEY,
+            PhanNguyen INT NOT NULL,
+            PhanLe DECIMAL(18,10) NOT NULL,
+            ThuTu INT NOT NULL
+        );
+
+        INSERT #Q(MaGV, PhanNguyen, PhanLe, ThuTu)
+        SELECT MaGV, CAST(FLOOR(Q) AS INT), Q - FLOOR(Q),
+               ROW_NUMBER() OVER(ORDER BY Q - FLOOR(Q) DESC, TyLeDinhMuc DESC, MaGV)
+        FROM (
+            SELECT d.MaGV, d.TyLeDinhMuc,
+                   CAST(@ConLai AS DECIMAL(18,10)) * d.TyLeDinhMuc / @TongTyLe AS Q
+            FROM dbo.DinhMucPhanCong d
+            JOIN dbo.GiangVien g ON g.MaGV = d.MaGV
+            WHERE d.MaDot = @MaDot
+              AND d.SoCaThuCong = 0
+              AND g.TrangThai = N'Đang công tác'
+        ) X;
+
+        SELECT @ConDu = @ConLai - ISNULL(SUM(PhanNguyen), 0) FROM #Q;
+
+        UPDATE d
+        SET SoCaQuyDinh = q.PhanNguyen + CASE WHEN q.ThuTu <= @ConDu THEN 1 ELSE 0 END
+        FROM dbo.DinhMucPhanCong d
+        JOIN #Q q ON q.MaGV = d.MaGV
+        WHERE d.MaDot = @MaDot;
+    END;
+
+    -- Inactive lecturers cannot retain a usable quota.
+    UPDATE d SET SoCaQuyDinh = 0
+    FROM dbo.DinhMucPhanCong d
+    JOIN dbo.GiangVien g ON g.MaGV = d.MaGV
+    WHERE d.MaDot = @MaDot AND g.TrangThai <> N'Đang công tác';
+
+    SELECT d.MaDot, d.MaGV, g.HoTen, d.TyLeDinhMuc,
+           d.SoCaQuyDinh, d.SoCaThuCong
+    FROM dbo.DinhMucPhanCong d
+    JOIN dbo.GiangVien g ON g.MaGV = d.MaGV
+    WHERE d.MaDot = @MaDot
+    ORDER BY d.TyLeDinhMuc DESC, d.MaGV;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.sp_DatDinhMucChung
+    @MaDot VARCHAR(20),
+    @TyLeDinhMuc DECIMAL(5,2),
+    @MaKhoa VARCHAR(20) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    IF @TyLeDinhMuc NOT BETWEEN 0 AND 100
+        THROW 51010, N'Tỷ lệ định mức chung phải từ 0 đến 100%.', 1;
+    IF NOT EXISTS(SELECT 1 FROM dbo.DotThi WHERE MaDot = @MaDot)
+        THROW 51011, N'Đợt thi không tồn tại.', 1;
+    IF @MaKhoa IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.Khoa WHERE MaKhoa = @MaKhoa)
+        THROW 51012, N'Khoa không tồn tại.', 1;
+
+    BEGIN TRAN;
+
+    INSERT dbo.DinhMucPhanCong(MaDot, MaGV, TyLeDinhMuc, GhiChu)
+    SELECT @MaDot, g.MaGV, @TyLeDinhMuc, N'Đặt định mức chung'
+    FROM dbo.GiangVien g
+    JOIN dbo.BoMon bm ON bm.MaBoMon = g.MaBoMon
+    WHERE g.TrangThai = N'Đang công tác'
+      AND (@MaKhoa IS NULL OR bm.MaKhoa = @MaKhoa)
+      AND NOT EXISTS(SELECT 1 FROM dbo.DinhMucPhanCong d WHERE d.MaDot = @MaDot AND d.MaGV = g.MaGV);
+
+    UPDATE d
+    SET TyLeDinhMuc = @TyLeDinhMuc,
+        SoCaThuCong = 0,
+        GhiChu = N'Đặt định mức chung'
+    FROM dbo.DinhMucPhanCong d
+    JOIN dbo.GiangVien g ON g.MaGV = d.MaGV
+    JOIN dbo.BoMon bm ON bm.MaBoMon = g.MaBoMon
+    WHERE d.MaDot = @MaDot
+      AND g.TrangThai = N'Đang công tác'
+      AND (@MaKhoa IS NULL OR bm.MaKhoa = @MaKhoa);
+
+    EXEC dbo.sp_TinhDinhMucTheoTyLe @MaDot;
+    COMMIT;
+
+    SELECT @MaDot AS MaDot,
+           (SELECT ISNULL(SUM(SoGVCanCap), 0) FROM dbo.CaThi WHERE MaDot = @MaDot) AS TongNhuCau,
+           (SELECT ISNULL(SUM(SoCaQuyDinh), 0) FROM dbo.DinhMucPhanCong WHERE MaDot = @MaDot) AS TongDinhMuc,
+           (SELECT ISNULL(SUM(SoGVCanCap), 0) FROM dbo.CaThi WHERE MaDot = @MaDot)
+             - (SELECT ISNULL(SUM(SoCaQuyDinh), 0) FROM dbo.DinhMucPhanCong WHERE MaDot = @MaDot) AS ChenhLech;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.sp_CapNhatTyLeDinhMuc
+    @MaDot VARCHAR(20), @MaGV VARCHAR(20), @TyLeDinhMuc DECIMAL(5,2)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+    IF @TyLeDinhMuc NOT BETWEEN 0 AND 100
+        THROW 51002, N'Tỷ lệ phải từ 0 đến 100%.', 1;
+    IF NOT EXISTS(SELECT 1 FROM dbo.DinhMucPhanCong WHERE MaDot = @MaDot AND MaGV = @MaGV)
+        THROW 51003, N'Không tìm thấy định mức.', 1;
+
+    BEGIN TRAN;
+    UPDATE dbo.DinhMucPhanCong
+    SET TyLeDinhMuc = @TyLeDinhMuc,
+        SoCaThuCong = CASE WHEN TyLeDinhMuc = @TyLeDinhMuc THEN SoCaThuCong ELSE 0 END
+    WHERE MaDot = @MaDot AND MaGV = @MaGV;
+    EXEC dbo.sp_TinhDinhMucTheoTyLe @MaDot;
+    COMMIT;
+END;
+GO
 

@@ -458,6 +458,10 @@ button.stat:hover{border-color:var(--blue)}
 .calendar-legend .legend-essay{background:#79d440}
 .calendar-legend .legend-pending{background:var(--calendar-pending)}
 .calendar-legend .legend-approved{background:var(--calendar-approved)}
+.calendar-legend span.legend-teaching{color:#5a4a78}
+.calendar-legend .legend-teaching i{background:#eeeaf7;border:1px solid #9a86bd}
+.calendar-legend span.legend-admin-busy{color:#344f79}
+.calendar-legend .legend-admin-busy i{background:#e5edf9;border:1px solid #7895c2}
 .calendar-scroll{overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--card)}
 .calendar-week{min-width:930px}
 .calendar-week-head{display:grid;grid-template-columns:58px repeat(7,minmax(105px,1fr));position:sticky;top:0;z-index:4;background:var(--card);border-bottom:1px solid var(--line)}
@@ -489,6 +493,10 @@ button.stat:hover{border-color:var(--blue)}
 .calendar-event.busy-approved{background:#d9f3e7;color:#175d47;border-left-color:#0b9569;box-shadow:inset 0 0 0 1px #a6dec4}
 .calendar-event.busy-approved b{color:#08734f}
 .calendar-event.busy-approved span{color:#25664f}
+.calendar-event.teaching-event{background:#eeeaf7;color:#493b67;border-left-color:#8267b2;box-shadow:inset 0 0 0 1px #d2c8e6}
+.calendar-event.teaching-event b,.calendar-event.teaching-event span{color:#51436f}
+.calendar-event.busy-admin{background:#e5edf9;color:#30496d;border-left-color:#6482b1;box-shadow:inset 0 0 0 1px #bdcde4}
+.calendar-event.busy-admin b,.calendar-event.busy-admin span{color:#30496d}
 .calendar-month-grid{min-width:790px;display:grid;grid-template-columns:repeat(7,minmax(100px,1fr));grid-auto-rows:minmax(102px,auto)}
 .calendar-month-heading{position:sticky;top:0;z-index:4;background:#f3f8ff;padding:9px;text-align:center;border-bottom:1px solid #d6e5f8;color:#2864a9;font-size:11px;font-weight:700}
 .calendar-month-day{min-width:0;padding:6px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--card)}
@@ -716,32 +724,40 @@ button.stat:hover{border-color:var(--blue)}
 .lec-filter-bar select{min-width:0;width:100%;height:40px;padding:7px 10px;background:var(--card)}
 .lec-result-count{color:var(--muted);font-size:12px;white-space:nowrap;text-align:right}
 .lec-table-scroll{max-width:100%;overflow:auto}
-.lec-table{width:100%;min-width:1040px;border-collapse:separate;border-spacing:0;font-size:12.5px}
+.lec-table{width:100%;min-width:1180px;table-layout:fixed;border-collapse:separate;border-spacing:0;font-size:12.5px}
 .lec-table th{height:42px;padding:10px 12px;background:var(--sky2);color:var(--muted);font-size:10.5px;letter-spacing:.45px;text-transform:uppercase}
 .lec-table td{height:68px;padding:10px 12px;border-bottom:1px solid color-mix(in srgb,var(--line) 72%,transparent)}
 .lec-table tbody tr:last-child td{border-bottom:0}
 .lec-table th:first-child{border-radius:10px 0 0 10px}
 .lec-table th:last-child{border-radius:0 10px 10px 0}
-.lec-table th:nth-child(1){width:22%}.lec-table th:nth-child(2){width:18%}.lec-table th:nth-child(3){width:15%}.lec-table th:nth-child(4){width:13%}.lec-table th:nth-child(5){width:21%}.lec-table th:nth-child(6){width:11%}
+.lec-table th:nth-child(1){width:19%}.lec-table th:nth-child(2){width:17%}.lec-table th:nth-child(3){width:13%}.lec-table th:nth-child(4){width:16%}.lec-table th:nth-child(5){width:23%}.lec-table th:nth-child(6){width:12%}
+.lec-table .lec-group-row td{height:auto;padding:9px 14px;background:linear-gradient(90deg,#edf4ff,#f7faff);border-bottom:1px solid #dce8ff;border-top:1px solid #dce8ff}
+.lec-group-label{display:flex;align-items:center;justify-content:space-between;gap:12px;color:#1f4ed8;font-size:12px}
+.lec-group-label b{font-weight:750}
+.lec-group-label span{padding:3px 9px;border:1px solid #d7e5ff;border-radius:99px;background:#fff;color:#58719a;font-size:10.5px;font-weight:650;white-space:nowrap}
 .lec-person{display:flex;align-items:center;gap:10px;min-width:0}
 .lec-avatar{width:34px;height:34px;display:grid;place-items:center;flex:none;border:1px solid #d9e5ff;border-radius:50%;background:linear-gradient(145deg,#eff4ff,#dfe9ff);color:#315de0;font-size:11px;font-weight:700}
 .lec-person-copy{display:flex;flex-direction:column;min-width:0}
 .lec-person-copy b{color:var(--ink);font-size:12.5px;line-height:1.4}
 .lec-person-copy small{color:var(--muted);font-size:10.5px}
 .lec-department{color:var(--muted);font-size:12px}
+.lec-unit{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:3px;min-width:0;width:100%}
+.lec-unit>b,.lec-unit>small{display:block;width:100%;min-width:0;white-space:normal;overflow-wrap:anywhere;line-height:1.35}
+.lec-unit b{color:var(--ink);font-size:12px;line-height:1.35;font-weight:650}
+.lec-unit small{color:var(--muted);font-size:10.5px;line-height:1.3}
 .lec-participation{display:inline-flex;align-items:center;gap:7px;padding:5px 9px;border:1px solid transparent;border-radius:99px;font-size:11px;font-weight:650;white-space:nowrap}
 .lec-participation i{width:7px;height:7px;border-radius:50%;background:currentColor}
 .lec-participation.is-in{color:#07835f;background:#eafaf3;border-color:#b7f0d6}
 .lec-participation.is-out{color:#64748b;background:#f1f4f8;border-color:#e1e7ef}
-.lec-quota{display:flex;align-items:center;gap:8px;white-space:nowrap}
-.lec-quota label{display:flex;align-items:center;gap:5px;height:34px;padding:0 8px;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+.lec-quota{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center;gap:6px;min-width:0;white-space:nowrap}
+.lec-quota label{display:flex;align-items:center;gap:3px;height:34px;min-width:0;padding:0 5px;white-space:nowrap;border:1px solid var(--line);border-radius:8px;background:var(--card)}
 .lec-quota label:focus-within{border-color:var(--blue);box-shadow:0 0 0 2px color-mix(in srgb,var(--blue) 12%,transparent)}
-.lec-quota input{width:43px;min-height:0;height:30px;padding:3px;border:0!important;border-radius:0!important;box-shadow:none!important;background:transparent;font-size:12px;font-weight:600}
+.lec-quota input{width:0;min-width:0;min-height:0!important;height:30px;flex:1 1 auto;padding:3px;border:0!important;border-radius:0!important;box-shadow:none!important;background:transparent;font-size:12px;font-weight:600}
 .lec-quota input:disabled{opacity:.5}
-.lec-quota label>span{color:var(--muted);font-size:11px}
+.lec-quota label>span{flex:none;color:var(--muted);font-size:11px}
 .lec-quota>small{color:var(--blue);font-size:11px;font-weight:600}
-.lec-schedule{display:flex;align-items:center;justify-content:space-between;gap:7px;min-width:0}
-.lec-schedule-summary{color:var(--muted);font-size:11.5px;white-space:nowrap}
+.lec-schedule{display:flex;align-items:flex-start;justify-content:space-between;gap:7px;min-width:0}
+.lec-schedule-summary{color:var(--muted);font-size:11.5px;line-height:1.45;white-space:normal;overflow-wrap:anywhere;min-width:0}
 .lec-schedule-summary.has-data{color:var(--warn);font-weight:600}
 .lec-schedule-summary i{font-style:normal;color:#a0aec0;padding:0 2px}
 .lec-duty-count{color:inherit;font-weight:600}
@@ -775,6 +791,18 @@ button.stat:hover{border-color:var(--blue)}
 @media(max-width:760px){.md.wide.schedule-editor-modal{width:min(620px,calc(100vw - 20px))}.sched-manual-form,.sched-duty-form,.sched-busy-form{grid-template-columns:repeat(2,minmax(0,1fr))}.sched-manual-form>.btn{min-height:40px}}
 @media(max-width:480px){.sched-tab{gap:5px;padding:7px 5px;font-size:11px}.sched-tab svg{width:15px;height:15px}.sched-manual-section{padding:12px}.sched-manual-form,.sched-duty-form,.sched-busy-form{grid-template-columns:1fr}}
 .lec-schedule-actions{display:flex;align-items:center;gap:5px;flex:none}
+
+/* Keep the lecturer unit labels and schedule editor readable even when a cached
+   or global rule resets inline elements and buttons to browser defaults. */
+.lec-table .lec-unit{display:flex!important;flex-direction:column!important;align-items:flex-start!important;gap:3px!important}
+.lec-table .lec-unit>b,.lec-table .lec-unit>small{display:block!important;width:100%;white-space:normal!important;overflow-wrap:anywhere}
+.md.schedule-editor-modal .sched-tabs{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 0 12px}
+.md.schedule-editor-modal button.sched-tab{display:flex!important;align-items:center;justify-content:center;gap:8px;min-width:0;min-height:42px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--muted);font:inherit;font-size:13px;font-weight:650;cursor:pointer}
+.md.schedule-editor-modal button.sched-tab.active{border-color:color-mix(in srgb,var(--blue) 36%,var(--line));background:color-mix(in srgb,var(--blue) 7%,var(--card));color:var(--blue)}
+.md.schedule-editor-modal .sched-manual-heading{display:flex!important;align-items:center;gap:12px;margin-bottom:12px}
+.md.schedule-editor-modal .sched-manual-heading>div{display:flex!important;flex-direction:column!important;align-items:flex-start!important;gap:4px;min-width:0}
+.md.schedule-editor-modal .sched-manual-heading b,.md.schedule-editor-modal .sched-manual-heading small{display:block!important;margin:0;line-height:1.45}
+.md.schedule-editor-modal .sched-manual-form>button.btn{min-height:40px;padding:8px 12px;border:1px solid var(--line);border-radius:9px;background:var(--card);color:var(--ink);font:inherit;font-size:13px;font-weight:600;white-space:nowrap}
 .lec-schedule-actions .btn{font-size:11px;padding:5px 8px;white-space:nowrap}
 .lec-schedule-actions .icon-delete{width:31px;padding:5px;justify-content:center}
 .lec-row-actions{white-space:nowrap}
@@ -788,11 +816,15 @@ button.stat:hover{border-color:var(--blue)}
 .dot-lecturer-picker .bz{grid-template-columns:36px minmax(180px,1.35fr) minmax(140px,1fr)!important;gap:0 10px;max-height:52vh;padding:2px 4px}
 .dot-lecturer-picker .bz>span{min-height:42px;display:flex;align-items:center;padding:7px 5px;border-bottom:1px solid var(--line)}
 .dot-lecturer-picker .bz>span.c{justify-content:center}
+.dot-lecturer-picker .bz>span.hd{position:sticky;top:0;z-index:1;min-height:34px;background:var(--card)}
+.dot-lecturer-picker .dot-lec-person,.dot-lecturer-picker .dot-lec-unit{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:2px;min-width:0}
+.dot-lecturer-picker .dot-lec-person b,.dot-lecturer-picker .dot-lec-unit b{color:var(--ink);font-size:12px;line-height:1.35}
+.dot-lecturer-picker .dot-lec-person small,.dot-lecturer-picker .dot-lec-unit small{color:var(--muted);font-size:10.5px;line-height:1.3}
 .dot-lecturer-picker #dotLecCount{margin-top:10px;padding:9px 11px;border-radius:9px;background:var(--sky2);color:var(--blue);font-size:12px;font-weight:600}
 @media(max-width:1220px){.lec-overview{grid-template-columns:repeat(2,minmax(0,1fr))}.lec-page>.ph{align-items:flex-start}.lec-page>.ph .ph-r{width:100%}.lec-head-actions{justify-content:flex-start}}
 @media(max-width:760px){.lec-page>.ph h1{font-size:23px}.lec-head-actions{gap:7px}.lec-head-actions>.btn{flex:1;justify-content:center}.lec-action-separator{display:none}.lec-overview{grid-template-columns:1fr 1fr}.lec-summary-card{min-height:100px;padding:12px;gap:9px}.lec-summary-card b{font-size:21px}.lec-summary-card>div>span{font-size:10.5px}.lec-participation-card{padding-right:12px;padding-bottom:48px}.lec-participation-card .btn{top:auto;right:auto;left:63px;bottom:10px}.lec-filter-bar{grid-template-columns:1fr 1fr}.lec-search{grid-column:1/-1}.lec-result-count{text-align:left}}
 @media(max-width:480px){.lec-head-actions>.btn{flex:1 1 calc(50% - 8px);white-space:normal}.lec-overview{grid-template-columns:1fr}.lec-summary-card{min-height:92px}.lec-participation-card{padding-bottom:14px;padding-right:102px}.lec-participation-card .btn{top:50%;left:auto;right:12px;bottom:auto;transform:translateY(-50%)}.lec-cleanup-card{min-height:auto}.lec-cleanup-actions .btn{flex:1;justify-content:center}.lec-filter-bar{grid-template-columns:1fr}.lec-search{grid-column:auto}.lec-result-count{grid-column:auto}.lec-table-panel{padding:12px}}
-@media(max-width:600px){.dot-lecturer-picker .dot-picker-toolbar{align-items:stretch}.dot-lecturer-picker .dot-picker-toolbar>label{white-space:normal}.dot-lecturer-picker .bz{grid-template-columns:30px minmax(130px,1fr)!important}.dot-lecturer-picker .bz>span:nth-child(3n){display:none}}
+@media(max-width:600px){.dot-lecturer-picker .dot-picker-toolbar{align-items:stretch}.dot-lecturer-picker .dot-picker-toolbar>label{white-space:normal}.dot-lecturer-picker .bz{grid-template-columns:28px minmax(115px,1.1fr) minmax(100px,.9fr)!important;gap:0 6px}.dot-lecturer-picker .dot-lec-person b,.dot-lecturer-picker .dot-lec-unit b{font-size:11px}.dot-lecturer-picker .dot-lec-person small,.dot-lecturer-picker .dot-lec-unit small{font-size:9.5px}}
 
 /* Bám sát mẫu điều phối: màu thao tác rõ, icon nhất quán và khu vực chia sẻ nổi bật */
 .lec-head-actions{gap:9px}
@@ -939,8 +971,12 @@ button.stat:hover{border-color:var(--blue)}
 /* Ép bố cục làm sạch lịch cùng hàng, kể cả khi rule layout chung ghi đè */
 .lec-cleanup-card>.lec-cleanup-heading{display:flex!important;flex-direction:row!important;align-items:center!important;justify-content:space-between!important;width:100%}
 .lec-cleanup-card>.lec-cleanup-heading>.lec-cleanup-warning{display:grid!important;place-items:center!important;margin-left:auto!important;flex:none!important}
-.lec-cleanup-card>.lec-cleanup-actions{display:flex!important;flex-direction:row!important;flex-wrap:nowrap!important;align-items:center!important;gap:8px!important;width:100%}
-.lec-cleanup-card>.lec-cleanup-actions>.btn{display:inline-flex!important;flex:1 1 0!important;width:auto!important;min-width:0!important;justify-content:center!important;white-space:nowrap!important}
+.lec-cleanup-card>.lec-cleanup-actions{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;align-items:stretch!important;gap:7px!important;width:100%}
+.lec-cleanup-card>.lec-cleanup-actions>.btn{display:inline-flex!important;flex:initial!important;width:100%!important;min-width:0!important;justify-content:center!important;white-space:nowrap!important;padding-inline:7px!important}
+.lec-cleanup-card>.lec-cleanup-actions>.btn:last-child:nth-child(odd){grid-column:1/-1}
+.lec-table .lec-schedule{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px;min-width:0}
+.lec-table .lec-schedule-summary{display:flex;align-items:center;flex-wrap:wrap;column-gap:5px;row-gap:2px;overflow-wrap:normal}
+.lec-table .lec-schedule-summary>span,.lec-table .lec-schedule-summary>b{white-space:nowrap}
 
 /* Account management page */
 .account-page>.ph{border-bottom:0;padding-bottom:0;margin-bottom:22px}

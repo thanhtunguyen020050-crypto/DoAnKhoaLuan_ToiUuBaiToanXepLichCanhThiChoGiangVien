@@ -13,9 +13,9 @@ except ImportError:
     from schemas.user_portal import LoginIn, ChangePasswordIn, SwapCreateIn, SwapRespondIn, AdminPasswordResetIn, ScheduleSharingIn
 
 try:
-    from ..models.user_portal import login as _model_login, change_password as _model_change_password, my_schedule as _model_my_schedule, all_schedules as _model_all_schedules, schedule_access as _model_schedule_access, get_schedule_sharing as _model_get_schedule_sharing, set_schedule_sharing as _model_set_schedule_sharing, available_lecturers as _model_available_lecturers, create_swap as _model_create_swap, respond_swap as _model_respond_swap, list_swaps as _model_list_swaps, notifications as _model_notifications, mark_notification_read as _model_mark_notification_read, admin_notifications as _model_admin_notifications, admin_accounts as _model_admin_accounts, reset_user_password as _model_reset_user_password
+    from ..models.user_portal import login as _model_login, change_password as _model_change_password, my_schedule as _model_my_schedule, my_calendar_data as _model_my_calendar_data, all_schedules as _model_all_schedules, schedule_access as _model_schedule_access, get_schedule_sharing as _model_get_schedule_sharing, set_schedule_sharing as _model_set_schedule_sharing, available_lecturers as _model_available_lecturers, create_swap as _model_create_swap, respond_swap as _model_respond_swap, list_swaps as _model_list_swaps, notifications as _model_notifications, mark_notification_read as _model_mark_notification_read, admin_notifications as _model_admin_notifications, admin_accounts as _model_admin_accounts, reset_user_password as _model_reset_user_password
 except ImportError:
-    from models.user_portal import login as _model_login, change_password as _model_change_password, my_schedule as _model_my_schedule, all_schedules as _model_all_schedules, schedule_access as _model_schedule_access, get_schedule_sharing as _model_get_schedule_sharing, set_schedule_sharing as _model_set_schedule_sharing, available_lecturers as _model_available_lecturers, create_swap as _model_create_swap, respond_swap as _model_respond_swap, list_swaps as _model_list_swaps, notifications as _model_notifications, mark_notification_read as _model_mark_notification_read, admin_notifications as _model_admin_notifications, admin_accounts as _model_admin_accounts, reset_user_password as _model_reset_user_password
+    from models.user_portal import login as _model_login, change_password as _model_change_password, my_schedule as _model_my_schedule, my_calendar_data as _model_my_calendar_data, all_schedules as _model_all_schedules, schedule_access as _model_schedule_access, get_schedule_sharing as _model_get_schedule_sharing, set_schedule_sharing as _model_set_schedule_sharing, available_lecturers as _model_available_lecturers, create_swap as _model_create_swap, respond_swap as _model_respond_swap, list_swaps as _model_list_swaps, notifications as _model_notifications, mark_notification_read as _model_mark_notification_read, admin_notifications as _model_admin_notifications, admin_accounts as _model_admin_accounts, reset_user_password as _model_reset_user_password
 
 router = APIRouter(prefix="/api/user", tags=["User UI"])
 
@@ -30,6 +30,10 @@ def change_password(x: ChangePasswordIn):
 @router.get('/schedule/{ma_gv}')
 def my_schedule(ma_gv: str, current_ma_gv: str = Depends(require_lecturer)):
     return _model_my_schedule(ma_gv=ma_gv, requesting_ma_gv=current_ma_gv)
+
+@router.get('/calendars')
+def my_calendar_data(current_ma_gv: str = Depends(require_lecturer)):
+    return _model_my_calendar_data(ma_gv=current_ma_gv)
 
 @router.get('/schedule-access')
 def schedule_access(current_ma_gv: str = Depends(require_lecturer)):

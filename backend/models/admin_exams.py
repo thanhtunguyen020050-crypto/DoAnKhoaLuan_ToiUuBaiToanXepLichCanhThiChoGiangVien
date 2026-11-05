@@ -1,15 +1,21 @@
 """Router quản trị - đợt thi và ca thi của API FastAPI."""
 
+import unicodedata
+import logging
 from fastapi import APIRouter, HTTPException
 
 try:
     from ..ketnoi_sql import get_connection
-    from ..schemas.admin import DotThiIn, CaThiIn, LuuPhanCongIn, DinhMucChungIn
+    from ..schemas.admin import DotThiIn, CaThiIn, LuuPhanCongIn, DinhMucChungIn, DinhMucGiangVienIn
     from .admin_helpers import dict_rows, _thu_vn, _drain
+    from .busy_requests import _calendar_date, _load_lecturer_calendar, _travel_gap_violated
 except ImportError:
     from ketnoi_sql import get_connection
-    from schemas.admin import DotThiIn, CaThiIn, LuuPhanCongIn, DinhMucChungIn
+    from schemas.admin import DotThiIn, CaThiIn, LuuPhanCongIn, DinhMucChungIn, DinhMucGiangVienIn
     from models.admin_helpers import dict_rows, _thu_vn, _drain
+    from models.busy_requests import _calendar_date, _load_lecturer_calendar, _travel_gap_violated
+
+logger = logging.getLogger(__name__)
 
 def list_exam_periods():
     try:
@@ -72,25 +78,28 @@ def list_exam_shifts(ma_dot: str | None=None):
         raise HTTPException(500, f'Lỗi đọc ca thi: {e}')
 
 def save_exam_assignments(ma_dot: str, x: LuuPhanCongIn):
-    """Persist the visible quota weights, recalculate SQL quotas, then save assignments."""
+    """Validate and save assignments against the quotas already stored in SQL."""
     pairs = [(a.ma_ca.strip(), a.ma_gv.strip()) for a in x.assignments]
     if len(pairs) != len(set(pairs)):
         raise HTTPException(400, 'Danh sách có phân công bị lặp.')
-    weights = [(q.ma_gv.strip(), q.ty_le) for q in x.dinh_muc]
-    if len(weights) != len({ma_gv for ma_gv, _ in weights}):
-        raise HTTPException(400, 'Danh sách định mức có giảng viên bị lặp.')
+    cn = None
     try:
         with get_connection() as cn:
             cur = cn.cursor()
-            if weights:
-                cur.execute('CREATE TABLE #LuuDinhMuc (MaGV VARCHAR(20) COLLATE DATABASE_DEFAULT NOT NULL PRIMARY KEY, TyLeDinhMuc DECIMAL(5,2) NOT NULL)')
-                cur.executemany('INSERT INTO #LuuDinhMuc(MaGV,TyLeDinhMuc) VALUES (?,?)', weights)
-                cur.execute("SELECT TOP 1 r.MaGV FROM #LuuDinhMuc r LEFT JOIN dbo.GiangVien g ON g.MaGV=r.MaGV AND g.TrangThai=N'Đang công tác' WHERE g.MaGV IS NULL")
-                if cur.fetchone():
-                    raise HTTPException(400, 'Danh sách định mức có giảng viên không tồn tại hoặc không còn công tác.')
-                cur.execute('\n                    UPDATE d SET TyLeDinhMuc=r.TyLeDinhMuc\n                    FROM dbo.DinhMucPhanCong d\n                    JOIN #LuuDinhMuc r ON r.MaGV=d.MaGV\n                    WHERE d.MaDot=?\n                ', ma_dot)
+            # Refresh integer quotas using only the persisted SQL percentages.
+            # The browser payload x.dinh_muc is deliberately ignored here.
             cur.execute('EXEC dbo.sp_TinhDinhMucTheoTyLe ?', ma_dot)
             _drain(cur)
+            cur.execute('''
+                SELECT
+                    COALESCE((SELECT SUM(SoCaQuyDinh) FROM dbo.DinhMucPhanCong WHERE MaDot=?),0),
+                    COALESCE((SELECT SUM(SoGVCanCap) FROM dbo.CaThi WHERE MaDot=?),0)
+            ''', ma_dot, ma_dot)
+            quota_total, required_total = cur.fetchone()
+            if int(quota_total or 0) != int(required_total or 0):
+                raise HTTPException(409,
+                    f'Định mức SQL chưa đồng bộ: tổng định mức {int(quota_total or 0)} ca, '
+                    f'nhưng đợt thi cần {int(required_total or 0)} lượt. Hãy tính lại định mức trước khi công bố.')
             cur.execute('CREATE TABLE #LuuPhanCong (MaCa VARCHAR(50) COLLATE DATABASE_DEFAULT NOT NULL, MaGV VARCHAR(20) COLLATE DATABASE_DEFAULT NOT NULL, PRIMARY KEY(MaCa,MaGV))')
             if pairs:
                 cur.executemany('INSERT INTO #LuuPhanCong(MaCa,MaGV) VALUES (?,?)', pairs)
@@ -100,17 +109,193 @@ def save_exam_assignments(ma_dot: str, x: LuuPhanCongIn):
             cur.execute("SELECT TOP 1 r.MaGV FROM #LuuPhanCong r LEFT JOIN dbo.GiangVien g ON g.MaGV=r.MaGV AND g.TrangThai=N'Đang công tác' WHERE g.MaGV IS NULL")
             if cur.fetchone():
                 raise HTTPException(400, 'Danh sách có giảng viên không tồn tại hoặc không còn công tác.')
+
+            # A quota deviation is valid only when it comes from a recorded,
+            # admin-approved cover and the submitted schedule still assigns
+            # that exact exam shift to the approved replacement.
+            cur.execute('''CREATE TABLE #ApprovedQuotaTransfers (
+                               MaYeuCau BIGINT NOT NULL PRIMARY KEY,
+                               MaCa VARCHAR(50) COLLATE DATABASE_DEFAULT NOT NULL,
+                               MaGVTruoc VARCHAR(20) COLLATE DATABASE_DEFAULT NOT NULL,
+                               MaGVSau VARCHAR(20) COLLATE DATABASE_DEFAULT NOT NULL)''')
+            cur.execute(''';WITH ApprovedHistory AS (
+                               SELECT ls.MaYeuCau,ls.MaCa,ls.MaGV,ls.MaGVThayThe,
+                                      ROW_NUMBER() OVER(PARTITION BY ls.MaCa ORDER BY ls.MaLichSu DESC) AS RN
+                               FROM dbo.LichSuDieuChinhLich ls
+                               JOIN dbo.YeuCauBaoBan y ON y.MaYeuCau=ls.MaYeuCau AND y.TrangThai='APPROVED'
+                               JOIN dbo.CaThi c ON c.MaCa=ls.MaCa AND c.MaDot=?
+                               WHERE ls.HanhDong='DUYET_DOI_LICH'
+                                 AND ls.MaGV IS NOT NULL AND ls.MaGVThayThe IS NOT NULL
+                           ), EffectiveCovers AS (
+                               SELECT MaCa,MaGVThayThe FROM ApprovedHistory WHERE RN=1
+                           )
+                           INSERT INTO #ApprovedQuotaTransfers(MaYeuCau,MaCa,MaGVTruoc,MaGVSau)
+                           SELECT h.MaYeuCau,h.MaCa,h.MaGV,h.MaGVThayThe
+                           FROM ApprovedHistory h
+                           JOIN EffectiveCovers e ON e.MaCa=h.MaCa
+                           JOIN #LuuPhanCong r ON r.MaCa=e.MaCa AND r.MaGV=e.MaGVThayThe''', ma_dot)
             cur.execute(
                 """
                 SELECT TOP 1 r.MaGV
                 FROM #LuuPhanCong r
                 LEFT JOIN dbo.DinhMucPhanCong d ON d.MaDot=? AND d.MaGV=r.MaGV
                 WHERE d.MaGV IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM #ApprovedQuotaTransfers t
+                      WHERE t.MaCa=r.MaCa AND t.MaGVSau=r.MaGV
+                  )
                 """,
                 ma_dot,
             )
             if cur.fetchone():
                 raise HTTPException(400, 'Danh sách có giảng viên chưa được chọn tham gia đợt thi.')
+
+            # Every lecturer must match the exact stored quota, adjusted only
+            # by the net effect of approved cover transfers in this schedule.
+            # No browser-provided percentage and no +/-1 tolerance is used.
+            cur.execute('''
+                ;WITH LecturerScope AS (
+                    SELECT MaGV FROM dbo.DinhMucPhanCong WHERE MaDot=?
+                    UNION SELECT MaGVTruoc FROM #ApprovedQuotaTransfers
+                    UNION SELECT MaGVSau FROM #ApprovedQuotaTransfers
+                ), TransferDelta AS (
+                    SELECT MaGV,SUM(Delta) AS Delta
+                    FROM (
+                        SELECT MaGVTruoc AS MaGV,-1 AS Delta FROM #ApprovedQuotaTransfers
+                        UNION ALL
+                        SELECT MaGVSau AS MaGV,1 AS Delta FROM #ApprovedQuotaTransfers
+                    ) t
+                    GROUP BY MaGV
+                ), AssignmentCounts AS (
+                    SELECT MaGV,COUNT(*) AS SoCaDuocXep
+                    FROM #LuuPhanCong GROUP BY MaGV
+                )
+                SELECT TOP 1 s.MaGV,
+                       ISNULL(MAX(d.SoCaQuyDinh),0)+ISNULL(MAX(td.Delta),0) AS SoCaCanXep,
+                       ISNULL(MAX(ac.SoCaDuocXep),0) AS SoCaDuocXep
+                FROM LecturerScope s
+                LEFT JOIN dbo.DinhMucPhanCong d ON d.MaDot=? AND d.MaGV=s.MaGV
+                LEFT JOIN TransferDelta td ON td.MaGV=s.MaGV
+                LEFT JOIN AssignmentCounts ac ON ac.MaGV=s.MaGV
+                GROUP BY s.MaGV
+                HAVING ISNULL(MAX(ac.SoCaDuocXep),0)<>
+                       ISNULL(MAX(d.SoCaQuyDinh),0)+ISNULL(MAX(td.Delta),0)
+            ''', ma_dot, ma_dot)
+            quota_mismatch = cur.fetchone()
+            if quota_mismatch:
+                raise HTTPException(409,
+                    f"Định mức chưa khớp (định mức SQL cộng/trừ đổi ca đã duyệt): giảng viên {quota_mismatch[0]} cần đúng "
+                    f"{quota_mismatch[1]} ca, hiện có {quota_mismatch[2]} ca.")
+
+            # Fail closed unless SQL exposes the required invigilator count.
+            cur.execute('''SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+                           WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='CaThi'
+                           ORDER BY ORDINAL_POSITION''')
+            ca_columns = [r[0] for r in cur.fetchall()]
+            required_aliases = {
+                'sogvcancap', 'sogvcan', 'sogiamthican', 'soluonggvcancap', 'soluonggiamthican',
+                'sogvyeucau', 'soluonggvcan', 'sogiangviencan', 'yeucaugiamthi',
+                'sogiangvienyeucau', 'soluonggiangviencan', 'sogvyeucaucan'
+            }
+            normalized_columns = {
+                ''.join(ch.lower() for ch in name if ch.isalnum()): name for name in ca_columns
+            }
+            required_column = next((normalized_columns[name] for name in required_aliases
+                                    if name in normalized_columns), None)
+            if not required_column:
+                raise HTTPException(500,
+                    'Không xác định được cột số giám thị cần cấp trong CaThi; đã hủy lưu để tránh công bố lịch thiếu giám thị.')
+            cur.execute(f'''SELECT TOP 1 c.MaCa, ISNULL(c.[{required_column}],0), COUNT(r.MaGV)
+                            FROM dbo.CaThi c
+                            LEFT JOIN #LuuPhanCong r ON r.MaCa=c.MaCa
+                            WHERE c.MaDot=?
+                            GROUP BY c.MaCa,c.[{required_column}]
+                            HAVING COUNT(r.MaGV)<>ISNULL(c.[{required_column}],0)''', ma_dot)
+            missing_staff = cur.fetchone()
+            if missing_staff:
+                raise HTTPException(409,
+                    f"Ca {missing_staff[0]} cần đúng {missing_staff[1]} giảng viên, "
+                    f"hiện được xếp {missing_staff[2]}.")
+
+            # Validate all hard time rules against the proposed rows before
+            # replacing the current official assignments.
+            cur.execute('''SELECT r.MaGV,c.MaCa,c.NgayThi,c.TuTiet,c.DenTiet,c.Buoi,
+                                  c.NhomHinhThucThi,c.HinhThucThi,c.PhongThi
+                           FROM #LuuPhanCong r JOIN dbo.CaThi c ON c.MaCa=r.MaCa
+                           WHERE c.MaDot=?''', ma_dot)
+            proposed = cur.fetchall()
+            by_lecturer = {}
+            for row in proposed:
+                by_lecturer.setdefault(row[0], []).append(row)
+
+            def exam_form(row):
+                value = str(row[6] or row[7] or '').strip().casefold()
+                normalized = ''.join(
+                    ch for ch in unicodedata.normalize('NFKD', value)
+                    if not unicodedata.combining(ch) and ch.isalnum()
+                )
+                if 'tuluan' in normalized or 'essay' in normalized:
+                    return 'tuluan'
+                if 'lythuyet' in normalized or 'tracnghiem' in normalized or 'multiplechoice' in normalized:
+                    return 'lythuyet'
+                return normalized
+
+            for ma_gv, shifts in by_lecturer.items():
+                # No overlapping exam shifts and no mixing exam forms within
+                # the same date/session.
+                for index, left in enumerate(shifts):
+                    for right in shifts[index + 1:]:
+                        if _calendar_date(left[2]) != _calendar_date(right[2]):
+                            continue
+                        if left[3] <= right[4] and right[3] <= left[4]:
+                            raise HTTPException(409,
+                                f'Giảng viên {ma_gv} bị xếp trùng giờ ở ca {left[1]} và {right[1]}.')
+                        left_form, right_form = exam_form(left), exam_form(right)
+                        if left_form not in {'lythuyet', 'tuluan'} or right_form not in {'lythuyet', 'tuluan'}:
+                            raise HTTPException(409,
+                                f'Không xác định được hình thức thi ở ca {left[1]} hoặc {right[1]}; chưa lưu phân công.')
+                        if str(left[5] or '').strip().casefold() == str(right[5] or '').strip().casefold() \
+                                and left_form != right_form:
+                            raise HTTPException(409,
+                                f'Giảng viên {ma_gv} bị xếp trộn hình thức thi trong cùng buổi ngày {left[2]}.')
+                        if _travel_gap_violated(
+                                {'start': left[3], 'end': left[4], 'location': left[8] or ''},
+                                right[3], right[4], right[8] or ''):
+                            raise HTTPException(409,
+                                f'Giảng viên {ma_gv} chưa có đủ 1 tiết di chuyển giữa ca {left[1]} và {right[1]}.')
+                        if _travel_gap_violated(
+                                {'start': right[3], 'end': right[4], 'location': right[8] or ''},
+                                left[3], left[4], left[8] or ''):
+                            raise HTTPException(409,
+                                f'Giảng viên {ma_gv} chưa có đủ 1 tiết di chuyển giữa ca {right[1]} và {left[1]}.')
+
+                calendars = (
+                    ('LichDayGV', 'lịch dạy', _load_lecturer_calendar(cur, 'LichDayGV', ma_gv)),
+                    ('PhanCongTrucDe', 'lịch trực đề', _load_lecturer_calendar(cur, 'PhanCongTrucDe', ma_gv)),
+                )
+                for shift in shifts:
+                    shift_date = _calendar_date(shift[2])
+                    for _, label, calendar in calendars:
+                        for event in calendar:
+                            if event['date'] != shift_date:
+                                continue
+                            if event['start'] <= shift[4] and shift[3] <= event['end']:
+                                raise HTTPException(409,
+                                    f"Giảng viên {ma_gv} bị trùng {label} tiết {event['start']}–{event['end']} "
+                                    f"với ca {shift[1]}.")
+                            if _travel_gap_violated(event, shift[3], shift[4], shift[8] or ''):
+                                raise HTTPException(409,
+                                    f"Giảng viên {ma_gv} chưa có đủ 1 tiết di chuyển giữa {label} và ca {shift[1]}.")
+                    cur.execute('''SELECT TOP 1 b.TuTiet,b.DenTiet,b.LyDo
+                                   FROM dbo.LichBanGV b
+                                   WHERE b.MaGV=? AND b.UuTien=1 AND b.NgayBan=?
+                                     AND b.TuTiet<=? AND ?<=b.DenTiet''',
+                                ma_gv, shift[2], shift[4], shift[3])
+                    busy = cur.fetchone()
+                    if busy:
+                        raise HTTPException(409,
+                            f"Giảng viên {ma_gv} trùng lịch bận mức 1 ({busy[2]}) "
+                            f"ở tiết {busy[0]}–{busy[1]} với ca {shift[1]}.")
             cur.execute('DELETE p FROM dbo.PhanCongCoiThi p INNER JOIN dbo.CaThi c ON c.MaCa=p.MaCa WHERE c.MaDot=?', ma_dot)
             cur.execute('INSERT INTO dbo.PhanCongCoiThi(MaCa,MaGV) SELECT MaCa,MaGV FROM #LuuPhanCong')
             cur.execute('EXEC dbo.sp_KiemTraRangBuoc ?,1', ma_dot)
@@ -120,8 +305,19 @@ def save_exam_assignments(ma_dot: str, x: LuuPhanCongIn):
             cn.commit()
             return {'ok': True, 'ma_dot': ma_dot, 'assignments_saved': len(pairs)}
     except HTTPException:
+        if cn is not None:
+            try:
+                cn.rollback()
+            except Exception:
+                logger.exception('Rollback failed while saving assignments for MaDot=%s', ma_dot)
         raise
     except Exception as e:
+        if cn is not None:
+            try:
+                cn.rollback()
+            except Exception:
+                logger.exception('Rollback failed while saving assignments for MaDot=%s', ma_dot)
+        logger.exception('Could not save assignments for MaDot=%s', ma_dot)
         raise HTTPException(400, f'Không lưu được phân công vào SQL Server: {e}')
 
 def remove_saved_assignments(ma_dot: str):
@@ -270,3 +466,60 @@ def set_common_quota(x: DinhMucChungIn):
         raise
     except Exception as e:
         raise HTTPException(400, str(e))
+
+
+def set_lecturer_quota(ma_dot: str, ma_gv: str, x: DinhMucGiangVienIn):
+    """Persist a lecturer's percentage or exact manual quota for one exam period."""
+    ma_dot = str(ma_dot or '').strip()
+    ma_gv = str(ma_gv or '').strip()
+    if not ma_dot or not ma_gv:
+        raise HTTPException(400, 'Thiếu mã đợt thi hoặc mã giảng viên.')
+
+    try:
+        with get_connection() as cn:
+            try:
+                cur = cn.cursor()
+                cur.execute('''
+                    SELECT g.TrangThai
+                    FROM dbo.DinhMucPhanCong d
+                    JOIN dbo.GiangVien g ON g.MaGV=d.MaGV
+                    WHERE d.MaDot=? AND d.MaGV=?
+                ''', ma_dot, ma_gv)
+                lecturer = cur.fetchone()
+                if not lecturer:
+                    raise HTTPException(404, 'Giảng viên chưa được chọn tham gia đợt thi này.')
+                if str(lecturer[0] or '').strip() != 'Đang công tác':
+                    raise HTTPException(400, 'Chỉ cập nhật định mức cho giảng viên đang công tác.')
+
+                manual = 1 if x.so_ca_thu_cong else 0
+                cur.execute('''
+                    UPDATE dbo.DinhMucPhanCong
+                    SET TyLeDinhMuc=?,
+                        SoCaThuCong=?,
+                        SoCaQuyDinh=CASE WHEN ?=1 THEN ? ELSE 0 END,
+                        GhiChu=CASE WHEN ?=1 THEN N'Định mức nhập số ca' ELSE N'Định mức theo tỷ lệ' END
+                    WHERE MaDot=? AND MaGV=?
+                ''', x.ty_le, manual, manual, x.so_ca, manual, ma_dot, ma_gv)
+
+                # Recalculate the non-manual rows from SQL percentages while
+                # preserving the exact count on manually locked rows.
+                cur.execute('EXEC dbo.sp_TinhDinhMucTheoTyLe ?', ma_dot)
+                _drain(cur)
+                cur.execute('''
+                    SELECT d.MaDot,d.MaGV,g.HoTen,d.TyLeDinhMuc,
+                           d.SoCaQuyDinh,d.SoCaThuCong
+                    FROM dbo.DinhMucPhanCong d
+                    JOIN dbo.GiangVien g ON g.MaGV=d.MaGV
+                    WHERE d.MaDot=?
+                    ORDER BY d.TyLeDinhMuc DESC,d.MaGV
+                ''', ma_dot)
+                items = dict_rows(cur)
+                cn.commit()
+                return {'ok': True, 'ma_dot': ma_dot, 'items': items}
+            except Exception:
+                cn.rollback()
+                raise
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f'Lỗi lưu định mức giảng viên: {e}')

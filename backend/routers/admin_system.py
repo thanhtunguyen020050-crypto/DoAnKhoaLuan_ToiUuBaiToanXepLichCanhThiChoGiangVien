@@ -46,11 +46,11 @@ def list_lecturers(ma_dot:str|None=None):
             cur=cn.cursor();cur.execute('''
 SELECT gv.MaGV,gv.HoTen,gv.HocVi,gv.ChucVu,gv.Email,gv.SoDienThoai,gv.TrangThai,
        bm.MaBoMon,bm.TenBoMon,k.MaKhoa,k.TenKhoa,
-       dm.TyLeDinhMuc,dm.SoCaQuyDinh,dm.MaDot
+       dm.TyLeDinhMuc,dm.SoCaQuyDinh,dm.SoCaThuCong,dm.MaDot
 FROM dbo.GiangVien gv
 JOIN dbo.BoMon bm ON bm.MaBoMon=gv.MaBoMon
 JOIN dbo.Khoa k ON k.MaKhoa=bm.MaKhoa
-OUTER APPLY (SELECT TOP 1 d.MaDot,d.TyLeDinhMuc,d.SoCaQuyDinh FROM dbo.DinhMucPhanCong d WHERE d.MaGV=gv.MaGV AND (? IS NULL OR d.MaDot=?) ORDER BY d.MaDot DESC) dm
+OUTER APPLY (SELECT TOP 1 d.MaDot,d.TyLeDinhMuc,d.SoCaQuyDinh,d.SoCaThuCong FROM dbo.DinhMucPhanCong d WHERE d.MaGV=gv.MaGV AND (? IS NULL OR d.MaDot=?) ORDER BY d.MaDot DESC) dm
 WHERE gv.TrangThai=N'Đang công tác'
 ORDER BY k.TenKhoa,bm.TenBoMon,gv.HoTen''',ma_dot,ma_dot)
             return {'items':dict_rows(cur)}

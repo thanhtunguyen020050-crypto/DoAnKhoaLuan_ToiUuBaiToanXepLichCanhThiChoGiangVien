@@ -1,4 +1,26 @@
 /* ========= Thay đổi input ========= */
+function syncQuotaRows(result){
+  if(!Array.isArray(result?.items))throw new Error('Máy chủ không trả về định mức sau khi lưu.');
+  const rows=new Map(result.items.map(x=>[String(x.MaGV??x.ma_gv??x.maGv??''),x]));
+  S.lecs.forEach(l=>{
+    const x=rows.get(String(l.id));if(!x)return;
+    l.pct=Number(x.TyLeDinhMuc??x.ty_le??l.pct);
+    l.quota=Number(x.SoCaQuyDinh??x.so_ca??l.quota);
+    const manual=x.SoCaThuCong??x.so_ca_thu_cong;
+    l.quota_manual=manual===true||Number(manual)===1;
+    l.quota_authoritative=true;
+  });
+}
+async function persistLecturerQuota(input,lecturer,quota,pct,manual){
+  const maDot=window.__MA_DOT;
+  if(!maDot){toast('Hãy chọn đợt thi trước khi cập nhật định mức.');render();return}
+  const group=input.closest('.lec-quota');
+  if(group)group.querySelectorAll('input').forEach(x=>x.disabled=true);
+  try{
+    const result=await API.updateQuota(maDot,lecturer.id,{ty_le:pct,so_ca:quota,so_ca_thu_cong:manual});
+    syncQuotaRows(result);render();toast('Đã lưu định mức và số ca cho đợt thi.');
+  }catch(e){render();toast(e.message||'Không lưu được định mức.')}
+}
 const C={
   'duty-file'(t){
     const f=t.files&&t.files[0];if(!f)return;
@@ -31,12 +53,33 @@ const C={
   'account-password-filter'(t){accountsPasswordFilter=t.value;refreshAccountRows()},
   'account-work-filter'(t){accountsWorkFilter=t.value;refreshAccountRows()},
   perm(t){S.perms[ROLES[+t.dataset.r]][+t.dataset.i]=t.checked?1:0;render()},
-  async pct(t){const l=lec(t.dataset.id),v=parseInt(t.value,10);if(!l)return;const q=isNaN(v)||v<0?0:Math.min(v,100);l.pct=q;S.lecs.forEach(x=>x.quota_authoritative=false);try{if(window.__MA_DOT)await API.updateLecturer(l.id,{ho_ten:l.name,don_vi:l.dept,ty_le:q,ma_dot:window.__MA_DOT});render();toast('Đã cập nhật định mức.')}catch(e){toast(e.message);render()}},
+  async pct(t){
+    const l=lec(t.dataset.id);if(!l)return;
+    const value=Number(t.value);
+    if(t.value.trim()===''||!Number.isFinite(value)||value<0||value>100){toast('Tỷ lệ định mức phải từ 0 đến 100%.');render();return}
+    await persistLecturerQuota(t,l,Number(l.quota)||0,Math.round(value*100)/100,false);
+  },
+  async 'quota-ca'(t){
+    const l=lec(t.dataset.id);if(!l)return;
+    const value=Number(t.value);
+    if(t.value.trim()===''||!Number.isInteger(value)||value<0){toast('Số ca định mức phải là số nguyên không âm.');render();return}
+    const oldQuota=Number(l.quota)||0,oldPct=Number(l.pct)||0;
+    let pct;
+    if(oldQuota>0){pct=Math.round(oldPct*value/oldQuota)}
+    else{
+      const total=S.exams.reduce((n,e)=>n+(Number(e.need)||0),0);
+      const others=S.lecs.filter(x=>inDot(x)&&String(x.id)!==String(l.id)).reduce((n,x)=>n+(Number(x.pct)||0),0);
+      pct=total>value&&others>0?Math.round(value*others/(total-value)):(value>0?100:0);
+    }
+    pct=Math.min(100,Math.max(0,pct));
+    await persistLecturerQuota(t,l,value,pct,true);
+  },
   'dot-lec-one'(t){t.checked?dotPick.sel.add(t.value):dotPick.sel.delete(t.value);$('#dotLecCount').textContent=dotLecCount();updateDotLecSelectAll()},
+  'dot-lec-dept'(t){dotPick.dept=t.value;$('#dotLecList').innerHTML=dotLecRows();updateDotLecSelectAll()},
   'dot-lec-all'(t){dotLecFiltered().forEach(l=>t.checked?dotPick.sel.add(String(l.id)):dotPick.sel.delete(String(l.id)));$('#dotLecList').innerHTML=dotLecRows();$('#dotLecCount').textContent=dotLecCount();updateDotLecSelectAll()},
   ld(t){F.ld=t.value;render()},ls(t){F.ls=t.value;render()},ed(t){F.ed=t.value;render()},ek(t){F.ek=t.value;render()},sd(t){F.sd=t.value;render()},lack(t){F.lack=t.checked;render()},
   s2n(t){S.soft.S2.n=+t.value;save()},
-  'soft-on'(t){S.soft[t.dataset.id].on=t.checked;render()},
+  'soft-on'(t){S.soft[t.dataset.id].on=t.checked;save();render()},
   'busy-file'(t){
     const f=t.files[0];if(!f)return;
     readTable(f).then(rows=>{
@@ -81,7 +124,7 @@ const C={
     const f=t.files[0];if(!f)return;
     readTable(f).then(rows=>{
       const out={name:f.name,rows:[],errors:[],teachers:[]};
-      let date=null,hdr=-1,ti=8,gi=9;
+      let date=null,hdr=-1,ti=8,gi=9,roomIndex=-1,courseIndex=-1;
 
       // Bước 1: Tìm ngày mặc định từ các dòng tiêu đề phía trên header
       // (ví dụ: "Ngày 08/12/2026" hoặc "Từ ngày 01/12/2026 đến...") cho file 1 ngày
@@ -99,6 +142,8 @@ const C={
           hdr=i;
           ti=cells.findIndex(x=>x==='tiet'||x.startsWith('tiet '));
           gi=cells.findIndex(x=>x.includes('giang vien'));
+          roomIndex=cells.findIndex(x=>x.includes('phong')||x.includes('dia diem')||x==='room');
+          courseIndex=cells.findIndex(x=>x.includes('hoc phan')||x.includes('mon hoc')||x.includes('hinh thuc'));
           break;
         }
       }
@@ -121,7 +166,10 @@ const C={
         // Dùng defaultDate nếu chưa gặp date separator row nào (file 1 ngày không có separator)
         const effectiveDate=date||defaultDate;
         if(!effectiveDate){out.errors.push({line:i+1,msg:'Không xác định được ngày học cho dòng này. Hãy kiểm tra file có dòng ngày phân cách giữa các nhóm ngày không?'});continue;}
-        out.rows.push({name:name,date:effectiveDate,period:range.key,start:range.start,end:range.end,line:i+1});
+        const room=roomIndex>=0?String(r[roomIndex]||'').trim():'',courseType=courseIndex>=0?String(r[courseIndex]||'').trim():'';
+        const roomCourse=plain(room+' '+courseType);
+        const clockTable=/zoom|ly thuyet/.test(roomCourse)?'theory_zoom':/phong may|thuc hanh|thi nghiem|gdtc|giao duc the chat|quoc phong/.test(roomCourse)?'practical':'standard';
+        out.rows.push({name:name,date:effectiveDate,period:range.key,start:range.start,end:range.end,room:room,courseType:courseType,clockTable:clockTable,line:i+1});
       }
       out.teachers=[...new Set(out.rows.map(r=>r.name))];
       if(!out.rows.length){toast('Không tìm thấy dòng lịch dạy hợp lệ trong file. Kiểm tra lại cấu trúc file hoặc định dạng ngày.');return}
@@ -140,12 +188,12 @@ const C={
           const d=parseDate(rows[dateRow][c]);if(d)lastDate=d;
           const slot=parseExamSlot(rows[periodRow][c]),need=parseInt(String(rows[needRow][c]||'').replace(/[^0-9]/g,''),10);
           if(!slot&&!rows[dateRow][c])continue;
-          const raw=plain(kindRow>=0?rows[kindRow][c]:''),kind=raw==='lt'||raw.includes('ly thuyet')?'LT':raw==='tl'||raw.includes('tu luan')?'TL':!raw&&slot?(slot.end-slot.start===1?'LT':'TL'):'';
-          const half=plain(halfRow>=0?rows[halfRow][c]:''),ses=slot?(slot.start<3?1:slot.start<6?2:slot.start<9?3:4):0,key=lastDate+'|'+(slot&&slot.label);
-          let m='';if(!lastDate)m='Thiếu ngày thi';else if(!slot)m='Thiếu hoặc sai ca/tiết';else if(!Number.isInteger(need)||need<1||need>30)m='Số giảng viên cần phải từ 1 đến 30';else if(!kind)m='Thiếu loại ca Lý thuyết/Tự luận';
+          const raw=plain(kindRow>=0?rows[kindRow][c]:''),kind=raw==='tn'||raw.includes('trac nghiem')?'TN':raw==='lt'||raw.includes('ly thuyet')?'LT':raw==='tl'||raw.includes('tu luan')?'TL':!raw&&slot?(slot.end-slot.start===1?'TN':'TL'):'';
+          const half=plain(halfRow>=0?rows[halfRow][c]:''),ses=slot?(slot.start<6?1:slot.start<12?2:3):0,key=lastDate+'|'+(slot&&slot.label);
+          let m='';if(!lastDate)m='Thiếu ngày thi';else if(!slot)m='Thiếu hoặc sai ca/tiết';else if(!Number.isInteger(need)||need<1||need>30)m='Số giảng viên cần phải từ 1 đến 30';else if(!kind)m='Thiếu loại ca Trắc nghiệm/Tự luận';
           if(!m&&seen[key])m='Ngày và ca/tiết bị lặp với cột '+seen[key];else if(!m)seen[key]=c+1;
           if(m){out.errors.push({line:c+1,msg:m});continue}
-          out.rows.push({date:lastDate,period:slot.label,ses:ses,half:/chieu|afternoon/.test(half)?'C':/sang|morning/.test(half)?'S':slot.start<=6?'S':'C',kind:kind,need:need});
+          out.rows.push({date:lastDate,period:slot.label,ses:ses,half:/toi|evening|night/.test(half)?'T':/chieu|afternoon/.test(half)?'C':/sang|morning/.test(half)?'S':slot.start<6?'S':slot.start<12?'C':'T',kind:kind,need:need,clockTable:'exam'});
         }
         pend=out;render();return;
       }
@@ -155,7 +203,7 @@ const C={
         const cells=Array.from(rows[i]||[],v=>plain(v)),find=fn=>cells.findIndex(v=>fn(String(v??'')));
         const d=find(x=>x.includes('ngay')),s=find(x=>x.includes('ca')||x.includes('tiet')||x.includes('slot')),n=find(x=>x.includes('can')||x.includes('so gv')||x.includes('giang vien')),k=find(x=>x.includes('loai'));
         // File phân công dự kiến có thể chỉ gồm Ngày thi, Tiết và Số GV cần cấp.
-        // Nếu thiếu Loại ca: 2 tiết mặc định Lý thuyết, 3 tiết mặc định Tự luận.
+        // Nếu thiếu Loại ca: ca 2 tiết mặc định Trắc nghiệm, ca dài hơn mặc định Tự luận.
         if(d>=0&&s>=0&&n>=0){ix={date:d,slot:s,need:n,kind:k};header=i;break}
       }
       rows.forEach((r,i)=>{
@@ -167,13 +215,13 @@ const C={
         // so malformed exam records still appear in the import error list.
         if(!date&&!slot&&!/^\d+$/.test(needText))return;
         const need=parseInt(needText.replace(/[^0-9]/g,''),10),raw=ix.kind>=0?plain(r[ix.kind]):'';
-        const kind=raw==='lt'||raw.includes('ly thuyet')?'LT':raw==='tl'||raw.includes('tu luan')?'TL':!raw&&slot?(slot.end-slot.start===1?'LT':'TL'):'';
+        const kind=raw==='tn'||raw.includes('trac nghiem')?'TN':raw==='lt'||raw.includes('ly thuyet')?'LT':raw==='tl'||raw.includes('tu luan')?'TL':!raw&&slot?(slot.end-slot.start===1?'TN':'TL'):'';
         let m='';
-        if(!date)m='Ngày thi không hợp lệ, cần dạng dd/mm/yyyy';else if(!slot)m='Ca/tiết không hợp lệ (ví dụ Ca 1 hoặc 1 → 2)';else if(!Number.isInteger(need)||need<1||need>30)m='Số giảng viên cần phải từ 1 đến 30';else if(!kind)m='Loại ca phải là Lý thuyết (LT) hoặc Tự luận (TL)';
-        const ses=slot?(slot.start<3?1:slot.start<6?2:slot.start<9?3:4):0,key=date+'|'+(slot&&slot.label);
+        if(!date)m='Ngày thi không hợp lệ, cần dạng dd/mm/yyyy';else if(!slot)m='Ca/tiết không hợp lệ (ví dụ Ca 1 hoặc 1 → 2)';else if(!Number.isInteger(need)||need<1||need>30)m='Số giảng viên cần phải từ 1 đến 30';else if(!kind)m='Loại ca phải là Trắc nghiệm (TN) hoặc Tự luận (TL)';
+        const ses=slot?(slot.start<6?1:slot.start<12?2:3):0,key=date+'|'+(slot&&slot.label);
         if(!m&&seen[key])m='Ngày và ca/tiết bị lặp với dòng '+seen[key];else if(!m)seen[key]=i+1;
         if(m){out.errors.push({line:i+1,msg:m});return}
-        out.rows.push({date:date,period:slot.label,ses:ses,half:slot.start<=6?'S':'C',kind:kind,need:need});
+        out.rows.push({date:date,period:slot.label,ses:ses,half:slot.start<6?'S':slot.start<12?'C':'T',kind:kind,need:need,clockTable:'exam'});
       });
       pend=out;render();
     }).catch(er=>toast(er.message));

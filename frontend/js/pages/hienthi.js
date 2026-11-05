@@ -73,8 +73,8 @@ function copyText(t){
 /* ===== Chọn giảng viên tham gia đợt gác thi ===== */
 let dotPick=null;
 function dotLecFiltered(){
-  const q=plain(dotPick.q||'');
-  return S.lecs.filter(l=>!q||plain([l.name,l.id,l.dept].join(' ')).includes(q));
+  const q=plain(dotPick.q||''),dept=dotPick.dept||'';
+  return S.lecs.filter(l=>(!dept||l.dept===dept)&&(!q||plain([l.name,l.id,l.bomon,l.ma_bo_mon,l.dept].join(' ')).includes(q)));
 }
 function dotLecCount(){return dotPick.sel.size+' / '+S.lecs.length+' giảng viên được chọn'}
 function updateDotLecSelectAll(){
@@ -86,15 +86,16 @@ function updateDotLecSelectAll(){
 function dotLecRows(){
   const L=dotLecFiltered();
   if(!L.length)return '<p class="muted" style="padding:14px 0">Không có giảng viên phù hợp.</p>';
-  return '<div class="bz" style="grid-template-columns:36px 1.6fr 1fr">'+L.map(l=>
+  return '<div class="bz" style="grid-template-columns:36px minmax(180px,1.35fr) minmax(180px,1.2fr)"><span class="c hd"></span><span class="hd">Giảng viên</span><span class="hd">Bộ môn / Khoa</span>'+L.map(l=>
     '<span class="c"><input type="checkbox" value="'+esc(l.id)+'"'+(dotPick.sel.has(String(l.id))?' checked':'')+' data-chg="dot-lec-one" aria-label="Chọn '+esc(l.name)+'"></span>'+
-    '<span>'+esc(l.name)+'</span><span class="muted">'+esc(l.dept)+'</span>').join('')+'</div>';
+    '<span class="dot-lec-person"><b>'+esc(l.name)+'</b><small>'+esc(l.id)+'</small></span><span class="dot-lec-unit"><b>'+esc(l.bomon||'Chưa phân bộ môn')+'</b><small>'+esc(l.dept||'Chưa phân khoa')+'</small></span>').join('')+'</div>';
 }
 function dotLecForm(){
-  dotPick={q:'',sel:new Set(S.lecs.filter(inDot).map(l=>String(l.id)))};
+  dotPick={q:'',dept:'',sel:new Set(S.lecs.filter(inDot).map(l=>String(l.id)))};
   openModal({title:'Chọn giảng viên tham gia đợt gác thi',wide:true,className:'dot-lecturer-picker',
-    body:'<p class="hint">Chỉ giảng viên được tick mới được tính định mức và xếp gác trong đợt <b>'+esc(window.__MA_DOT)+'</b>.</p>'+
-      '<div class="tools dot-picker-toolbar"><div class="grow"><input type="text" data-inp="dot-lec-q" placeholder="Tìm theo tên hoặc mã giảng viên"></div>'+
+    body:'<p class="hint">Chọn giảng viên theo bộ môn. Sau khi lưu danh sách, nhập định mức (%) cho từng người ngay trong bảng.</p>'+
+      '<div class="tools dot-picker-toolbar"><div class="grow"><input type="text" data-inp="dot-lec-q" placeholder="Tìm tên, mã giảng viên hoặc bộ môn"></div>'+
+      '<select data-chg="dot-lec-dept" aria-label="Lọc theo khoa"><option value="">Tất cả khoa</option>'+depts().map(d=>'<option value="'+esc(d)+'"'+(dotPick.dept===d?' selected':'')+'>'+esc(d)+'</option>').join('')+'</select>'+
       '<label class="muted"><input type="checkbox" data-chg="dot-lec-all"> Chọn tất cả đang hiển thị</label></div>'+
       '<div id="dotLecList">'+dotLecRows()+'</div><p class="muted" id="dotLecCount">'+dotLecCount()+'</p><div class="err" id="ferr"></div>',
     foot:'<button class="btn" data-act="close">Hủy</button><button class="btn pri" data-act="save-dot-lec">Lưu danh sách</button>'});

@@ -9,14 +9,15 @@ window.API = (() => {
     return text || 'Yêu cầu không thành công.';
   }
   async function req(path, opts={}) {
+    const {exposeServerError=false, ...requestOptions} = opts;
     const token = sessionStorage.getItem('authToken');
-    const headers = {'Content-Type':'application/json', ...(opts.headers || {})};
+    const headers = {'Content-Type':'application/json', ...(requestOptions.headers || {})};
     if (token) headers['Authorization'] = 'Bearer ' + token;
     let r;
     try {
       // These endpoints expose live scheduling data. Do not let the browser
       // reuse a cached GET after an admin publishes or removes assignments.
-      r = await fetch(base + path, {...opts, headers, cache:opts.cache||'no-store'});
+      r = await fetch(base + path, {...requestOptions, headers, cache:requestOptions.cache||'no-store'});
     } catch (e) {
       const err = new Error('Không kết nối được máy chủ API. Hãy kiểm tra backend đang chạy tại '+base+'.');
       err.cause = e;
@@ -25,14 +26,15 @@ window.API = (() => {
     const data = await r.json().catch(()=>({}));
     if (!r.ok){
       const d=data.detail;
-      const msg=typeof d==='string'?d:(d?.message||((d?.errors||d?.violations||[]).map(x=>typeof x==='string'?x:`Dòng ${x.line}: ${x.name||''} ${x.msg||''}`).join('\n'))||('API lỗi '+r.status));
-      const err=new Error(friendlyError(msg, r.status));
-      err.detail=d==='Not Found'?'Not Found':(d&&typeof d==='object'?{
+      const validationErrors=Array.isArray(d)?d.map(x=>`${Array.isArray(x.loc)?x.loc.join('.'):'Request'}: ${x.msg||'Dữ liệu không hợp lệ'}`).join('\n'):'';
+      const msg=typeof d==='string'?d:(d?.message||validationErrors||((d?.errors||d?.violations||[]).map(x=>typeof x==='string'?x:`Dòng ${x.line}: ${x.name||''} ${x.msg||''}`).join('\n'))||('API lỗi '+r.status));
+      const err=new Error(exposeServerError?msg:friendlyError(msg, r.status));
+      err.detail=exposeServerError?d:(d==='Not Found'?'Not Found':(d&&typeof d==='object'?{
         ...d,
         message:d.message?friendlyError(d.message,r.status):d.message,
         errors:Array.isArray(d.errors)?d.errors.map(x=>typeof x==='string'?friendlyError(x,r.status):({...x,msg:friendlyError(x.msg,r.status)})):d.errors,
         violations:Array.isArray(d.violations)?d.violations.map(x=>friendlyError(x,r.status)):d.violations
-      }:friendlyError(d,r.status));
+      }:friendlyError(d,r.status)));
       throw err;
     }
     return data;
@@ -93,11 +95,12 @@ window.API = (() => {
     async updateExam(id,x){return req('/ca-thi/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(x)})},
     async deleteExam(id){return req('/ca-thi/'+encodeURIComponent(id),{method:'DELETE'})},
     async clearAllExams(){return req('/ca-thi/all',{method:'DELETE'})},
-    async saveAssignments(maDot,assignments,dinhMuc=[]){const result=await req('/dot-thi/'+encodeURIComponent(maDot)+'/phan-cong',{method:'POST',body:JSON.stringify({assignments,dinh_muc:dinhMuc})});signalScheduleChange('saved',maDot);return result},
+    async saveAssignments(maDot,assignments){const result=await req('/dot-thi/'+encodeURIComponent(maDot)+'/phan-cong',{method:'POST',body:JSON.stringify({assignments}),exposeServerError:true});signalScheduleChange('saved',maDot);return result},
     async removeSavedAssignments(maDot){const result=await req('/dot-thi/'+encodeURIComponent(maDot)+'/phan-cong',{method:'DELETE'});signalScheduleChange('removed',maDot);return result},
     async lecturers(dot){return req('/giang-vien'+(dot?'?ma_dot='+encodeURIComponent(dot):''))},
     async createLecturer(x){return req('/giang-vien',{method:'POST',body:JSON.stringify(x)})},
     async updateLecturer(id,x){return req('/giang-vien/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(x)})},
+    async updateQuota(maDot,maGv,x){return req('/dinh-muc/'+encodeURIComponent(maDot)+'/'+encodeURIComponent(maGv),{method:'PUT',body:JSON.stringify(x)})},
     async setCommonQuota(dot,tyLe,maKhoa=null){return req('/dinh-muc/dat-chung',{method:'POST',body:JSON.stringify({ma_dot:dot,ty_le:tyLe,ma_khoa:maKhoa})})},
     async setDotLecturers(maDot,maGv){return req('/dot-thi/'+encodeURIComponent(maDot)+'/giang-vien-tham-gia',{method:'PUT',body:JSON.stringify({ma_gv:maGv})})},
     async boMon(khoa='CNTT'){return req('/bo-mon?ma_khoa='+encodeURIComponent(khoa))},
@@ -112,6 +115,8 @@ window.API = (() => {
     async importBusy(rows,filename){return req('/lich-ban/import?filename='+encodeURIComponent(filename||''),{method:'POST',body:JSON.stringify(rows)})},
     async importDuty(maDot,rows,filename){return req('/truc-de/import',{method:'POST',body:JSON.stringify({ma_dot:maDot,nguon_file:filename||'',assignments:rows})})},
     async dutyAssignments(maDot){return req('/truc-de?ma_dot='+encodeURIComponent(maDot))},
+    async clearAllDuty(maDot){return req('/truc-de/all?ma_dot='+encodeURIComponent(maDot),{method:'DELETE'})},
+    async clearLecturerDuty(maDot,maGv){return req('/truc-de/'+encodeURIComponent(maDot)+'/'+encodeURIComponent(maGv),{method:'DELETE'})},
     async clearAllTeaching(){return req('/lich-day/all',{method:'DELETE'})},
     async clearAllBusy(){return req('/lich-ban/all',{method:'DELETE'})}
   };

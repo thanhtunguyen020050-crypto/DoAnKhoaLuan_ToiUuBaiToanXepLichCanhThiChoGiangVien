@@ -15,6 +15,7 @@ const ADMIN_SCRIPTS = [
 
 const LECTURER_SCRIPTS = [
   '/js/core/cauhinh.js',
+  '/js/core/tienich.js',
   '/js/user.js'
 ];
 
@@ -47,12 +48,18 @@ export default function LegacyAppHost({ entry }) {
   React.useEffect(() => {
     let cancelled = false;
     const scripts = entry === 'user' ? LECTURER_SCRIPTS : ADMIN_SCRIPTS;
+    setLoadError('');
     (async () => {
       try {
         for (const src of scripts) {
           await loadClassicScript(src);
           if (cancelled) return;
         }
+        if (cancelled || entry === 'user') return;
+        if (typeof window.render !== 'function') {
+          throw new Error('Không khởi tạo được giao diện quản trị: thiếu hàm render().');
+        }
+        window.render();
       } catch (error) {
         if (!cancelled) setLoadError(error.message || 'Không khởi động được giao diện.');
       }

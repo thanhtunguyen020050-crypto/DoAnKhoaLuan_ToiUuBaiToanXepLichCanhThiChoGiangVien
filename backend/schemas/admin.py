@@ -45,7 +45,7 @@ class CaThiIn(BaseModel):
     ngay_thi: str
     tu_tiet: int = Field(ge=1, le=16)
     den_tiet: int = Field(ge=1, le=16)
-    hinh_thuc_thi: str = Field(pattern=r'^(Lý thuyết|Tự luận)$')
+    hinh_thuc_thi: str = Field(pattern=r'^(Lý thuyết|Tự luận|Trắc nghiệm)$')
     so_gv_can_cap: int = Field(ge=1, le=30)
 
 
@@ -90,3 +90,9 @@ class DinhMucChungIn(BaseModel):
     ma_dot: str = Field(min_length=1, max_length=20)
     ty_le: float = Field(ge=0, le=100)
     ma_khoa: str | None = None
+
+
+class DinhMucGiangVienIn(BaseModel):
+    ty_le: float = Field(ge=0, le=100)
+    so_ca: int = Field(ge=0)
+    so_ca_thu_cong: bool = False

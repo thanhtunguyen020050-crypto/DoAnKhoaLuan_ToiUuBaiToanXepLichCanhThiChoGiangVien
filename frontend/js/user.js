@@ -1,7 +1,7 @@
 (() => {
   const $ = s => document.querySelector(s);
   const base = window.API_BASE_URL || 'http://127.0.0.1:8000/api';
-  const state = {user:null, page:'schedule', busyRequests:[], swaps:[], schedule:[], allSchedules:[], scheduleAccess:{can_view_all:false,lecturers:[]}, scheduleViewer:'mine', lecturers:[], notices:[], pendingCoverId:null, calendarDate:null, calendarMode:'week', selectedBusyCa:null};
+  const state = {user:null, page:'schedule', busyRequests:[], teachingCalendar:[], busyCalendar:[], swaps:[], schedule:[], allSchedules:[], scheduleAccess:{can_view_all:false,lecturers:[]}, scheduleViewer:'mine', lecturers:[], notices:[], pendingCoverId:null, calendarDate:null, calendarMode:'week', selectedBusyCa:null};
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const friendlyError = (message, status) => status >= 500 || /SQL Server|ODBC|SQLExecDirect|SQLDriverConnect|invalid object name|stored procedure|dbo\.|database|SQLSTATE|Microsoft/i.test(String(message||''))
     ? 'Chưa thể hoàn tất thao tác. Vui lòng thử lại; nếu lỗi tiếp diễn, hãy liên hệ quản trị viên.'
@@ -207,21 +207,27 @@
         state.scheduleViewer=viewer==='mine'||viewer==='all'||allowed.has(String(viewer).toLowerCase())?viewer:'mine';
         if(state.scheduleViewer==='all'){
           const all=await req('/user/schedules/all');
-          state.allSchedules=all.items||[];state.schedule=[];
+          state.allSchedules=all.items||[];state.schedule=[];state.teachingCalendar=[];state.busyCalendar=[];
         }else{
           const maGV=state.scheduleViewer==='mine'?state.user.ma_gv:state.scheduleViewer;
-          const schedule=await req('/user/schedule/'+encodeURIComponent(maGV));
+          const [schedule,calendar]=await Promise.all([
+            req('/user/schedule/'+encodeURIComponent(maGV)),
+            state.scheduleViewer==='mine'?req('/user/calendars'):Promise.resolve({teaching:[],busy:[]})
+          ]);
           state.schedule=schedule.items||[];state.allSchedules=[];
+          state.teachingCalendar=calendar.teaching||[];state.busyCalendar=calendar.busy||[];
         }
         state.busyRequests=busy.items||[];
       }
       if(state.page==='busy'){
-        const [br, sc]=await Promise.all([
+        const [br, sc, calendar]=await Promise.all([
           req('/user/busy-requests'),
-          req('/user/schedule/'+encodeURIComponent(state.user.ma_gv))
+          req('/user/schedule/'+encodeURIComponent(state.user.ma_gv)),
+          req('/user/calendars')
         ]);
         state.busyRequests=br.items;
         state.schedule=sc.items;
+        state.teachingCalendar=calendar.teaching||[];state.busyCalendar=calendar.busy||[];
       }
       if(state.page==='swaps'){
         const [br,sc]=await Promise.all([
@@ -256,7 +262,7 @@
     const options=state.scheduleAccess.can_view_all?`<label class="schedule-viewer"><span>Xem lịch</span><select id="scheduleViewer" aria-label="Chọn lịch giảng viên"><option value="mine"${isMine?' selected':''}>Lịch của tôi</option><option value="all"${isAll?' selected':''}>Tất cả giảng viên</option>${(state.scheduleAccess.lecturers||[]).filter(x=>String(x.MaGV).toLowerCase()!==currentId).map(x=>`<option value="${esc(x.MaGV)}"${String(x.MaGV).toLowerCase()===String(state.scheduleViewer).toLowerCase()?' selected':''}>${esc(x.HoTen)} · ${esc(x.MaGV)}</option>`).join('')}</select></label>`:'';
     const body=isAll?allSchedulesTable(list):'<div id="scheduleCalendar"></div>';
     shell(`<div class="crumb">Trang chủ / Lịch gác thi</div><header class="ph"><div><h1>${esc(title)}</h1><p>${isAll?'Chọn giảng viên để xem lịch tuần hoặc tháng.':isMine?'Xem lịch tuần/tháng; đơn báo bận cũng hiện tại đây.':'Lịch tuần/tháng của giảng viên đã chọn.'}</p></div><div class="ph-r">${options}${isMine?`<button class="btn pri" id="goBusy">${IC.clip} Báo bận ca thi</button>`:''}<button class="btn" id="refresh">${IC.refresh} Làm mới dữ liệu</button></div></header><div class="stats"><div class="stat ic"><div class="si">${IC.clip}</div><div><b>${list.length}</b><span>${isAll?'Tổng lượt phân công':'Tổng số ca'}</span></div></div><div class="stat ic"><div class="si">${IC.cal}</div><div><b>${up}</b><span>Ca sắp tới</span></div></div><div class="stat ic"><div class="si">${IC.ok}</div><div><b>${list.length-up}</b><span>Ca đã qua</span></div></div></div><div class="panel lecturer-calendar-panel">${body}</div>`);
-    if(!isAll)renderCalendarInto('#scheduleCalendar',{duties:list,busyRequests:isMine?(state.busyRequests||[]):[]});
+    if(!isAll)renderCalendarInto('#scheduleCalendar',{duties:list,busyRequests:isMine?(state.busyRequests||[]):[],teaching:state.teachingCalendar||[],busyCalendar:state.busyCalendar||[]});
     const viewer=$('#scheduleViewer');if(viewer)viewer.onchange=()=>{state.scheduleViewer=viewer.value;state.calendarDate=null;renderPage()};
     $('#refresh').onclick=renderPage;
     const goBusy=$('#goBusy');if(goBusy)goBusy.onclick=()=>{state.page='busy';renderPage()};
@@ -267,16 +273,9 @@
     return `<div class="tw"><table><thead><tr><th>Ngày thi</th><th>Ca</th><th>Tiết</th><th>Giảng viên</th><th>Hình thức</th><th>Phòng</th></tr></thead><tbody>${body||'<tr><td colspan="6" class="empty">Chưa có phân công nào.</td></tr>'}</tbody></table></div>`;
   }
 
-  // Tiện ích tính giờ theo tiết học
-  function tietToTime(tiet, isEnd=false) {
-    const times = {
-      1: ['07:00','07:50'], 2: ['07:50','08:40'], 3: ['08:50','09:40'], 4: ['09:40','10:30'],
-      5: ['10:40','11:30'], 6: ['11:30','12:20'], 7: ['13:00','13:50'], 8: ['13:50','14:40'],
-      9: ['14:50','15:40'], 10: ['15:40','16:30'], 11: ['16:40','17:30'], 12: ['17:30','18:20'],
-      13: ['18:30','19:15'], 14: ['19:15','20:00'], 15: ['20:00','20:45'], 16: ['20:45','21:30']
-    };
-    const t = times[tiet] || ['07:00','11:30'];
-    return isEnd ? t[1] : t[0];
+  // Dùng chung bộ quy đổi của core cho lịch tuần, tránh lệch mốc giữa các màn hình.
+  function tietToTime(tiet, isEnd=false, kind='exam', startPeriod=tiet, endPeriod=tiet, entry=null) {
+    return periodToTime(tiet, isEnd, kind, startPeriod, endPeriod, entry);
   }
 
   function localDateKey(date){
@@ -292,17 +291,32 @@
     start.setDate(start.getDate()-((start.getDay()+6)%7));
     return start;
   }
-  function calendarEvents(duties,busyRequests){
+  function calendarEvents(duties,busyRequests,teaching,busyCalendar){
     const events=[];
+    const periodKey=(date,start,end)=>{
+      const day=String(date||'').slice(0,10),first=Number(start),last=Number(end);
+      return /^\d{4}-\d{2}-\d{2}$/.test(day)&&Number.isInteger(first)&&Number.isInteger(last)&&first>=1&&last>=first&&last<=16?`${day}|${first}|${last}`:'';
+    };
+    const adminBusyKeys=new Set((busyCalendar||[]).map(x=>periodKey(x.NgayBan,x.TuTiet,x.DenTiet)).filter(Boolean));
     (duties||[]).forEach(x=>{
       const examType=String(x.HinhThucThi||'').trim().toLowerCase();
       const dutyClass=examType==='tl'||examType.includes('tự luận')?'duty-essay':'duty-theory';
       events.push({
-        kind:'duty',dutyClass,date:String(x.NgayThi||'').slice(0,10),start:tietToTime(x.TuTiet,false),end:tietToTime(x.DenTiet,true),
+        kind:'duty',dutyClass,date:String(x.NgayThi||'').slice(0,10),start:tietToTime(x.TuTiet,false,'exam',x.TuTiet,x.DenTiet),end:tietToTime(x.DenTiet,true,'exam',x.TuTiet,x.DenTiet),
         maCa:String(x.MaCa||''),title:`Ca gác thi · tiết ${x.TuTiet}–${x.DenTiet}`,
         detail:`${LB[x.HinhThucThi]||x.HinhThucThi||'Ca thi'}${x.PhongThi?' · '+x.PhongThi:''}${x.MaCa?' · '+x.MaCa:''}`,
         sort:Number(x.TuTiet)||0
       });
+    });
+    (teaching||[]).forEach(x=>{
+      const date=String(x.NgayDay||'').slice(0,10),startPeriod=Number(x.TuTiet),endPeriod=Number(x.DenTiet);
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isInteger(startPeriod)||!Number.isInteger(endPeriod)||startPeriod<1||endPeriod<startPeriod||endPeriod>16)return;
+      events.push({kind:'teaching',date,start:tietToTime(startPeriod,false,'teaching',startPeriod,endPeriod,x),end:tietToTime(endPeriod,true,'teaching',startPeriod,endPeriod,x),title:`Lịch dạy · tiết ${startPeriod}–${endPeriod}`,detail:String(x.GhiChu||''),sort:startPeriod});
+    });
+    (busyCalendar||[]).forEach(x=>{
+      const date=String(x.NgayBan||'').slice(0,10),startPeriod=Number(x.TuTiet),endPeriod=Number(x.DenTiet);
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isInteger(startPeriod)||!Number.isInteger(endPeriod)||startPeriod<1||endPeriod<startPeriod||endPeriod>16)return;
+      events.push({kind:'busy-admin',date,start:tietToTime(startPeriod,false,'exam',startPeriod,endPeriod,x),end:tietToTime(endPeriod,true,'exam',startPeriod,endPeriod,x),title:`Lịch bận · tiết ${startPeriod}–${endPeriod}`,detail:String(x.LyDo||''),sort:startPeriod});
     });
     (busyRequests||[]).filter(x=>['PENDING','APPROVED'].includes(String(x.TrangThai||'').toUpperCase())).forEach(x=>{
       const rawStart=String(x.ThoiGianBatDauBan||'').replace('T',' ');
@@ -310,6 +324,7 @@
       const date=rawStart.slice(0,10),start=rawStart.slice(11,16),end=rawEnd.slice(11,16);
       if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!/^\d{2}:\d{2}$/.test(start)||!/^\d{2}:\d{2}$/.test(end))return;
       const approved=String(x.TrangThai).toUpperCase()==='APPROVED';
+      if(approved&&adminBusyKeys.has(periodKey(date,x.TuTiet,x.DenTiet)))return;
       events.push({kind:'busy',date,start,end,maCa:String(x.MaCa||''),title:approved?'Báo bận đã duyệt':'Đơn báo bận chờ duyệt',detail:`#${x.MaYeuCau} · ${x.LyDoBaoBan||''}`,sort:clockMinutes(start)});
     });
     return events.filter(x=>/^\d{4}-\d{2}-\d{2}$/.test(x.date));
@@ -318,23 +333,50 @@
     const match=String(value||'').match(/^(\d{1,2}):(\d{2})/);
     return match?Number(match[1])*60+Number(match[2]):0;
   }
-  function calendarEventMarkup(event,options,month=false,overlap=false){
+  function calendarEventGeometry(event){
+    const top=Math.max(0,clockMinutes(event.start)-6*60);
+    const bottom=Math.min(22*60,clockMinutes(event.end))-6*60;
+    const height=Math.max(34,bottom-top-3);
+    return{top:top,height:height,bottom:top+height};
+  }
+  function calendarDayLayout(events){
+    const items=events.map(event=>({event,...calendarEventGeometry(event)})).sort((a,b)=>a.top-b.top||a.bottom-b.bottom);
+    let cluster=[],clusterEnd=-1;
+    const finishCluster=()=>{
+      if(!cluster.length)return;
+      const laneEnds=[];
+      cluster.forEach(item=>{
+        let lane=laneEnds.findIndex(end=>end<=item.top);
+        if(lane<0){lane=laneEnds.length;laneEnds.push(item.bottom)}
+        else laneEnds[lane]=item.bottom;
+        item.lane=lane;
+      });
+      const lanes=laneEnds.length;
+      cluster.forEach(item=>item.lanes=lanes);
+      cluster=[];
+    };
+    items.forEach(item=>{
+      if(cluster.length&&item.top>=clusterEnd)finishCluster();
+      cluster.push(item);
+      clusterEnd=cluster.length===1?item.bottom:Math.max(clusterEnd,item.bottom);
+    });
+    finishCluster();
+    return items;
+  }
+  function calendarEventMarkup(event,options,month=false,layout=null){
     const disabled=event.kind==='duty'&&options.disabledCas?.has(event.maCa);
     const selected=event.kind==='duty'&&options.selectedCa===event.maCa;
-    const statusClass=event.kind==='busy'?(event.title.includes('đã duyệt')?'busy-approved':'busy-pending'):`duty-event ${event.dutyClass||'duty-theory'}`;
+    const statusClass=event.kind==='busy'?(event.title.includes('đã duyệt')?'busy-approved':'busy-pending'):event.kind==='busy-admin'?'busy-admin':event.kind==='teaching'?'teaching-event':`duty-event ${event.dutyClass||'duty-theory'}`;
     const classes=`calendar-event ${statusClass}${selected?' selected':''}${disabled?' disabled':''}${options.selectable&&event.kind==='duty'?' selectable':''}${month?' month-event':''}`;
     const title=`${event.title} · ${event.detail}`;
     const content=month?`<b>${esc(event.start)} ${esc(event.title)}</b>`:`<b>${esc(event.title)}</b><span>${esc(event.detail)}</span>`;
     const selectable=options.selectable&&event.kind==='duty';
     const attrs=selectable?`data-calendar-select="${esc(event.maCa)}" ${disabled?'disabled':''}`:'';
     if(month)return selectable?`<button type="button" class="${classes}" title="${esc(title)}" aria-label="${esc(title)}" ${attrs}>${content}</button>`:`<div class="${classes}" title="${esc(title)}">${content}</div>`;
-    const top=Math.max(0,clockMinutes(event.start)-7*60);
-    const bottom=Math.min(22*60,clockMinutes(event.end))-7*60;
-    const height=Math.max(34,bottom-top-3);
+    const geometry=layout||calendarEventGeometry(event);
     let left='4px',width='calc(100% - 8px)';
-    if(overlap&&event.kind==='duty')width='calc(50% - 6px)';
-    if(overlap&&event.kind==='busy'){left='50%';width='calc(50% - 5px)';}
-    const style=`top:${top}px;height:${height}px;left:${left};width:${width}`;
+    if(geometry.lanes>1){left=`calc(${geometry.lane*100/geometry.lanes}% + 4px)`;width=`calc(${100/geometry.lanes}% - 8px)`;}
+    const style=`top:${geometry.top}px;height:${geometry.height}px;left:${left};width:${width}`;
     return selectable?`<button type="button" class="${classes}" style="${style}" title="${esc(title)}" aria-label="${esc(title)}" ${attrs}>${content}</button>`:`<div class="${classes}" style="${style}" title="${esc(title)}">${content}</div>`;
   }
   function calendarWidgetMarkup(options){
@@ -352,7 +394,7 @@
       state.calendarDate=localDateKey(anchor);
     }
     const mode=state.calendarMode==='month'?'month':'week';
-    const events=calendarEvents(options.duties,options.busyRequests);
+    const events=calendarEvents(options.duties,options.busyRequests,options.teaching,options.busyCalendar);
     const today=localDateKey(new Date());
     const weekDays=Array.from({length:7},(_,i)=>['T2','T3','T4','T5','T6','T7','CN'][(i+startOfWeek(anchor).getDay()+6)%7]);
     let label='';
@@ -362,15 +404,12 @@
       const first=days[0],last=days[6];
       label=`${first.toLocaleDateString('vi-VN',{day:'numeric',month:'short'})} – ${last.toLocaleDateString('vi-VN',{day:'numeric',month:'short',year:'numeric'})}`;
       const labels=days.map((d,i)=>`<div class="calendar-day-heading ${localDateKey(d)===today?'today':''}"><span>${weekDays[i]}</span><b>${d.getDate()}</b></div>`).join('');
-      const hourLabels=Array.from({length:15},(_,i)=>`<div>${String(i+7).padStart(2,'0')}:00</div>`).join('');
+      const hourLabels=Array.from({length:16},(_,i)=>`<div>${String(i+6).padStart(2,'0')}:00</div>`).join('');
       const columns=days.map(d=>{
-        const key=localDateKey(d),items=events.filter(x=>x.date===key).sort((a,b)=>a.sort-b.sort);
-        return `<div class="calendar-day-column" data-date="${key}">${items.map(ev=>{
-          const overlaps=Boolean(ev.maCa&&items.some(x=>x.kind!==ev.kind&&x.maCa===ev.maCa));
-          return calendarEventMarkup(ev,options,false,overlaps);
-        }).join('')}</div>`;
+        const key=localDateKey(d),items=calendarDayLayout(events.filter(x=>x.date===key));
+        return `<div class="calendar-day-column" data-date="${key}">${items.map(item=>calendarEventMarkup(item.event,options,false,item)).join('')}</div>`;
       }).join('');
-      grid=`<div class="calendar-week" style="--calendar-hours:15"><div class="calendar-week-head"><div></div>${labels}</div><div class="calendar-time-grid"><div class="calendar-time-labels">${hourLabels}</div><div class="calendar-days-grid">${columns}</div></div></div>`;
+      grid=`<div class="calendar-week" style="--calendar-hours:16"><div class="calendar-week-head"><div></div>${labels}</div><div class="calendar-time-grid"><div class="calendar-time-labels">${hourLabels}</div><div class="calendar-days-grid">${columns}</div></div></div>`;
     }else{
       const firstOfMonth=new Date(anchor.getFullYear(),anchor.getMonth(),1);
       const from=startOfWeek(firstOfMonth);
@@ -380,11 +419,11 @@
       const cells=days.map(d=>{
         const key=localDateKey(d),items=events.filter(x=>x.date===key).sort((a,b)=>a.sort-b.sort);
         const outside=d.getMonth()!==anchor.getMonth();
-        return `<div class="calendar-month-day ${outside?'outside-month':''} ${key===today?'today':''}"><span class="calendar-date-number">${d.getDate()}</span><div class="calendar-month-events">${items.slice(0,4).map(ev=>calendarEventMarkup(ev,options,true,false)).join('')}${items.length>4?`<span class="calendar-more">+${items.length-4} ca khác</span>`:''}</div></div>`;
+        return `<div class="calendar-month-day ${outside?'outside-month':''} ${key===today?'today':''}"><span class="calendar-date-number">${d.getDate()}</span><div class="calendar-month-events">${items.slice(0,4).map(ev=>calendarEventMarkup(ev,options,true)).join('')}${items.length>4?`<span class="calendar-more">+${items.length-4} mục</span>`:''}</div></div>`;
       }).join('');
       grid=`<div class="calendar-month-grid">${headings}${cells}</div>`;
     }
-    return `<div class="calendar-toolbar"><div class="calendar-nav"><button type="button" class="calendar-nav-btn" data-calendar-step="-1" aria-label="Khoảng trước">‹</button><button type="button" class="btn calendar-today" data-calendar-today>Hôm nay</button><button type="button" class="calendar-nav-btn" data-calendar-step="1" aria-label="Khoảng sau">›</button><strong>${esc(label)}</strong></div><div class="calendar-mode"><button type="button" class="${mode==='week'?'active':''}" data-calendar-mode="week">Tuần</button><button type="button" class="${mode==='month'?'active':''}" data-calendar-mode="month">Tháng</button></div></div><div class="calendar-legend"><span><i class="legend-theory"></i>Ca lý thuyết</span><span><i class="legend-essay"></i>Ca tự luận</span><span><i class="legend-pending"></i>Báo bận chờ duyệt</span><span><i class="legend-approved"></i>Báo bận đã duyệt</span></div><div class="calendar-scroll">${grid}</div>`;
+    return `<div class="calendar-toolbar"><div class="calendar-nav"><button type="button" class="calendar-nav-btn" data-calendar-step="-1" aria-label="Khoảng trước">‹</button><button type="button" class="btn calendar-today" data-calendar-today>Hôm nay</button><button type="button" class="calendar-nav-btn" data-calendar-step="1" aria-label="Khoảng sau">›</button><strong>${esc(label)}</strong></div><div class="calendar-mode"><button type="button" class="${mode==='week'?'active':''}" data-calendar-mode="week">Tuần</button><button type="button" class="${mode==='month'?'active':''}" data-calendar-mode="month">Tháng</button></div></div><div class="calendar-legend"><span><i class="legend-theory"></i>Ca trắc nghiệm</span><span><i class="legend-essay"></i>Ca tự luận</span><span><i class="legend-pending"></i>Báo bận chờ duyệt</span><span><i class="legend-approved"></i>Báo bận đã duyệt</span><span class="legend-teaching"><i></i>Lịch dạy</span><span class="legend-admin-busy"><i></i>Lịch bận</span></div><div class="calendar-scroll">${grid}</div>`;
   }
   function renderCalendarInto(selector,options){
     const host=$(selector);
@@ -430,7 +469,7 @@
 
       <div class="panel lecturer-calendar-panel busy-calendar-panel">
         <h2>Lịch gác thi và báo bận</h2>
-        <p class="sub">Lý thuyết màu trắng, tự luận màu xanh lá. Ca đang chờ xử lý sẽ bị khóa.</p>
+        <p class="sub">Trắc nghiệm màu trắng, tự luận màu xanh lá. Ca đang chờ xử lý sẽ bị khóa.</p>
         <div id="busyCalendar"></div>
       </div>
 
@@ -628,6 +667,8 @@
     const calendarOptions={
       duties:state.schedule,
       busyRequests:list,
+      teaching:state.teachingCalendar||[],
+      busyCalendar:state.busyCalendar||[],
       selectable:true,
       selectedCa:state.selectedBusyCa,
       disabledCas:activePendingSlots,

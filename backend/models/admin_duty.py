@@ -138,3 +138,51 @@ def list_duty(ma_dot: str):
             return {'items': dict_rows(cur)}
     except Exception as e:
         raise HTTPException(500, f'Could not read exam-paper duty: {e}')
+
+
+def clear_all_duty(ma_dot: str):
+    """Xóa các phân công trực đề của riêng đợt thi được chọn."""
+    ma_dot = str(ma_dot or '').strip()
+    if not ma_dot:
+        raise HTTPException(400, 'Thiếu mã đợt thi cần xóa lịch trực đề.')
+    try:
+        with get_connection() as cn:
+            cur = cn.cursor()
+            _ensure_table(cur)
+            cur.execute('SELECT 1 FROM dbo.DotThi WHERE MaDot=?', ma_dot)
+            if not cur.fetchone():
+                raise HTTPException(404, 'Đợt thi không tồn tại.')
+            cur.execute('DELETE FROM dbo.PhanCongTrucDe WHERE MaDot=?', ma_dot)
+            deleted = max(cur.rowcount, 0)
+            cn.commit()
+            return {'ok': True, 'ma_dot': ma_dot, 'deleted': deleted}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f'Lỗi xóa lịch trực đề của đợt thi: {e}')
+
+
+def clear_lecturer_duty(ma_dot: str, ma_gv: str):
+    """Xóa lịch trực đề của một giảng viên trong riêng đợt thi được chọn."""
+    ma_dot = str(ma_dot or '').strip()
+    ma_gv = str(ma_gv or '').strip()
+    if not ma_dot or not ma_gv:
+        raise HTTPException(400, 'Thiếu mã đợt thi hoặc mã giảng viên.')
+    try:
+        with get_connection() as cn:
+            cur = cn.cursor()
+            _ensure_table(cur)
+            cur.execute('SELECT 1 FROM dbo.DotThi WHERE MaDot=?', ma_dot)
+            if not cur.fetchone():
+                raise HTTPException(404, 'Đợt thi không tồn tại.')
+            cur.execute('SELECT 1 FROM dbo.GiangVien WHERE MaGV=?', ma_gv)
+            if not cur.fetchone():
+                raise HTTPException(404, 'Giảng viên không tồn tại.')
+            cur.execute('DELETE FROM dbo.PhanCongTrucDe WHERE MaDot=? AND MaGV=?', ma_dot, ma_gv)
+            deleted = max(cur.rowcount, 0)
+            cn.commit()
+            return {'ok': True, 'ma_dot': ma_dot, 'ma_gv': ma_gv, 'deleted': deleted}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f'Lỗi xóa lịch trực đề của giảng viên: {e}')
