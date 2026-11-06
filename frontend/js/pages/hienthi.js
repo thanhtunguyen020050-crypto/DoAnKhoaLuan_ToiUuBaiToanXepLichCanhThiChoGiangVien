@@ -7,7 +7,59 @@ function render(){
   const pages={home:homeView,sys:sysView,lec:lecView,exam:examView,cons:consView,sched:schedView,rep:repView,accounts:accountsView,busy_reqs:busyReqsView};
   app.innerHTML=topbar()+'<div class="shell">'+sidebar()+'<main class="main">'+pages[view]()+'</main></div>';
   updateLecturerCount();refreshAdminBell();refreshAdminBusyCount();ensureAdminRequestPolling();
-  if(view==='sched')loadScheduleSharingStatus();
+  if(view==='sched'){
+    loadScheduleSharingStatus();
+    startScheduleRunStatusPolling();
+  }else stopScheduleRunStatusPolling();
+}
+let scheduleRunStatusTimer=null,scheduleRunStatusLoading=false;
+function scheduleRunDuration(seconds){
+  const elapsed=Math.max(0,Number(seconds)||0),total=elapsed?Math.ceil(elapsed):0,h=Math.floor(total/3600),m=Math.floor(total%3600/60),s=total%60;
+  return [h,m,s].map(x=>String(x).padStart(2,'0')).join(':');
+}
+function scheduleRunStatusHtml(run){
+  if(!run){
+    if(S.scheduleRunError)return '<div class="sched-run-empty"><b>Lần xếp lịch chưa nhận được kết quả.</b><span class="sched-run-result-error" role="alert">'+esc(S.scheduleRunError)+'</span></div>';
+    return '<div class="sched-run-empty"><b>Chưa có lần xếp lịch tự động nào gần đây.</b><span>Khi quản trị viên chạy xếp lịch, trạng thái và thời gian sẽ hiện ở đây.</span></div>';
+  }
+  const running=run.status==='RUNNING',phase=run.phase||'',phaseIndex=phase==='preparing'?0:phase==='finding_feasible'?1:phase==='optimizing_soft'?2:3;
+  const steps=['Chuẩn bị dữ liệu','Tìm lịch thỏa ràng buộc cứng','Tối ưu ràng buộc mềm'];
+  const started=run.started_at?new Date(run.started_at).toLocaleString('vi-VN'):'';
+  const completed=run.completed_at?new Date(run.completed_at).toLocaleString('vi-VN'):'';
+  const resultLabels={OPTIMAL:'Đã tìm được lịch tối ưu',FEASIBLE:'Đã tìm được lịch phù hợp',INFEASIBLE:'Không tìm được lịch thỏa ràng buộc cứng',UNKNOWN:'Hết thời gian trước khi tìm được lịch',INVALID:'Dữ liệu xếp lịch chưa hợp lệ',ERROR:'Có lỗi khi xếp lịch'};
+  const progress=running?'<div class="sched-run-steps">'+steps.map((label,index)=>'<span class="'+(index<phaseIndex?'done':index===phaseIndex?'current':'')+'"><i>'+(index<phaseIndex?'✓':index+1)+'</i>'+label+'</span>').join('')+'</div><div class="sched-run-track"><i></i></div>':'';
+  const solverStats=Number(run.solutions_found)>0?'<span>Đã tìm thấy '+Number(run.solutions_found).toLocaleString('vi-VN')+' phương án</span>':'';
+  const objective=run.best_objective!=null?'<span>Điểm đánh giá tốt nhất: '+Number(run.best_objective).toLocaleString('vi-VN')+'</span>':'';
+  const heading=running?'Đang xếp lịch tự động':run.status==='FAILED'?'Lần xếp lịch gần nhất bị lỗi':'Lần xếp lịch gần nhất đã hoàn tất';
+  const detail=running?(run.phase_label||'Bộ giải đang xử lý lịch'):(resultLabels[run.result_status]||run.result_status||'Đã kết thúc');
+  const solverMode=Number(run.time_limit_seconds)<=30?'Xếp nhanh · 30 giây':Number(run.time_limit_seconds)>=300?'Tối ưu sâu · 5 phút':'Tiêu chuẩn · 2 phút';
+  const modeSummary='<span>Chế độ: '+solverMode+'</span>';
+  const assignmentSummary=run.assigned_count==null?'':'<span>Đã xếp '+Number(run.assigned_count).toLocaleString('vi-VN')+' / '+Number(run.needed_count||0).toLocaleString('vi-VN')+' lượt · Còn thiếu '+Number(run.missing_count||0).toLocaleString('vi-VN')+'</span>';
+  const localError=S.scheduleRunError?'<p class="sched-run-result-error" role="alert">'+esc(S.scheduleRunError)+'</p>':'';
+  return '<div class="sched-run-head"><div><b>'+heading+'</b><span>Đợt thi '+esc(run.ma_dot||'')+' · Bắt đầu '+esc(started)+'</span></div><strong class="sched-run-clock">'+scheduleRunDuration(run.elapsed_seconds)+'</strong></div>'+(running?progress:'')+'<div class="sched-run-meta">'+modeSummary+(running?'<span>'+esc(detail)+'</span>'+solverStats+objective:'<span>Kết quả: '+esc(detail)+'</span>'+assignmentSummary+'<span>Thời gian chạy: '+scheduleRunDuration(run.elapsed_seconds)+'</span><span>Hoàn tất: '+esc(completed)+'</span>')+'</div>'+(running?'<p class="sched-run-note">Điểm đánh giá càng thấp thì lịch càng tốt. Bộ giải chưa thể đưa ra phần trăm hoàn thành chính xác.</p>':'')+localError;
+}
+function updateScheduleRunStatus(run){
+  const node=$('#scheduleRunStatus');
+  if(node)node.innerHTML=scheduleRunStatusHtml(run);
+}
+async function pollScheduleRunStatus(){
+  if(view!=='sched'||!cur||scheduleRunStatusLoading)return;
+  scheduleRunStatusLoading=true;
+  try{const result=await API.scheduleRunStatus();updateScheduleRunStatus(result.run||null)}
+  catch(error){
+    if(S.scheduleRunError)updateScheduleRunStatus(null);
+    else{
+      const node=$('#scheduleRunStatus');
+      if(node)node.innerHTML='<div class="sched-run-empty"><b>Không kết nối được để lấy trạng thái xếp lịch.</b><span class="sched-run-result-error" role="alert">'+esc(error.message||error)+'</span></div>';
+    }
+  }
+  finally{scheduleRunStatusLoading=false}
+}
+function startScheduleRunStatusPolling(){
+  if(!scheduleRunStatusTimer){pollScheduleRunStatus();scheduleRunStatusTimer=setInterval(pollScheduleRunStatus,1500)}
+}
+function stopScheduleRunStatusPolling(){
+  if(scheduleRunStatusTimer){clearInterval(scheduleRunStatusTimer);scheduleRunStatusTimer=null}
 }
 function updateScheduleSharingControls(){
   const status=$('#scheduleSharingStatus'),badge=$('#scheduleSharingBadge'),toggle=document.querySelector('[data-act="toggle-schedule-sharing"]'),reload=document.querySelector('[data-act="refresh-schedule-sharing"]');
@@ -41,7 +93,12 @@ function loadScheduleSharingStatus(force=false){
 }
 function snapshot(mode){
   const a=analyze();
-  S.hist.push({id:S.nid++,time:new Date().toLocaleString('vi-VN'),mode:mode,count:a.assigned,pct:a.overall,s1:{on:a.S1.enabled,weight:a.S1.weight,gapDays:a.S1.fragmentedDays,gapEvents:a.S1.gapEvents,idlePeriods:a.S1.idlePeriods,sessionBreaks:a.S1.sessionBreaks,penaltyUnits:a.S1.penaltyUnits,penalty:a.S1.penalty,lecturerDays:a.S1.total,multiShiftDays:a.S1.multiShiftDays},snap:S.exams.map(e=>[e.id,e.asg.map(x=>[x.l,x.lock?1:0])])});
+  const score=mode==='Google OR-Tools CP-SAT'?S.solverPenaltyReport:null,scoreS1=score?.details?.S1;
+  const s1={version:2,on:score?(score.penalties?.S1!=null):!!a.S1.enabled,
+    penalty:score?score.penalties?.S1:a.S1.penalty,
+    lecturerDays:scoreS1?.lecturer_days??a.S1.lecturerDays,
+    singletonDays:scoreS1?.singleton_exam_days??a.S1.singletonDays,pct:a.S1.pct};
+  S.hist.push({id:S.nid++,time:new Date().toLocaleString('vi-VN'),mode:mode,count:a.assigned,pct:a.overall,s1:s1,solverPenaltyReport:score,snap:S.exams.map(e=>[e.id,e.asg.map(x=>[x.l,x.lock?1:0])])});
   if(S.hist.length>20)S.hist.shift();
 }
 function lecForm(l){

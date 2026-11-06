@@ -1,7 +1,7 @@
 (() => {
   const $ = s => document.querySelector(s);
   const base = window.API_BASE_URL || 'http://127.0.0.1:8000/api';
-  const state = {user:null, page:'schedule', busyRequests:[], teachingCalendar:[], busyCalendar:[], swaps:[], schedule:[], allSchedules:[], scheduleAccess:{can_view_all:false,lecturers:[]}, scheduleViewer:'mine', lecturers:[], notices:[], pendingCoverId:null, calendarDate:null, calendarMode:'week', selectedBusyCa:null};
+  const state = {user:null, page:'schedule', busyRequests:[], teachingCalendar:[], busyCalendar:[], swaps:[], schedule:[], allSchedules:[], scheduleAccess:{can_view_all:false,lecturers:[]}, scheduleViewer:'mine', lecturers:[], notices:[], pendingCoverId:null, calendarDate:null, calendarMode:'week', selectedBusyCa:null, scheduleRunStatus:null};
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const friendlyError = (message, status) => status >= 500 || /SQL Server|ODBC|SQLExecDirect|SQLDriverConnect|invalid object name|stored procedure|dbo\.|database|SQLSTATE|Microsoft/i.test(String(message||''))
     ? 'Chưa thể hoàn tất thao tác. Vui lòng thử lại; nếu lỗi tiếp diễn, hãy liên hệ quản trị viên.'
@@ -197,11 +197,13 @@
     if(!state.user)return loginView();
     try{
       if(state.page==='schedule'){
-        const [access, busy]=await Promise.all([
+        const [access, busy, runStatus]=await Promise.all([
           req('/user/schedule-access'),
-          req('/user/busy-requests')
+          req('/user/busy-requests'),
+          req('/xep-lich/run-status').catch(()=>({run:null}))
         ]);
         state.scheduleAccess=access;
+        state.scheduleRunStatus=runStatus?.run||null;
         const viewer=state.scheduleAccess.can_view_all?(state.scheduleViewer||'mine'):'mine';
         const allowed=new Set((state.scheduleAccess.lecturers||[]).map(x=>String(x.MaGV).toLowerCase()));
         state.scheduleViewer=viewer==='mine'||viewer==='all'||allowed.has(String(viewer).toLowerCase())?viewer:'mine';
@@ -261,11 +263,41 @@
     const title=isAll?'Lịch gác thi của tất cả giảng viên':isMine?'Lịch gác thi của tôi':`Lịch gác thi · ${target?.HoTen||state.scheduleViewer}`;
     const options=state.scheduleAccess.can_view_all?`<label class="schedule-viewer"><span>Xem lịch</span><select id="scheduleViewer" aria-label="Chọn lịch giảng viên"><option value="mine"${isMine?' selected':''}>Lịch của tôi</option><option value="all"${isAll?' selected':''}>Tất cả giảng viên</option>${(state.scheduleAccess.lecturers||[]).filter(x=>String(x.MaGV).toLowerCase()!==currentId).map(x=>`<option value="${esc(x.MaGV)}"${String(x.MaGV).toLowerCase()===String(state.scheduleViewer).toLowerCase()?' selected':''}>${esc(x.HoTen)} · ${esc(x.MaGV)}</option>`).join('')}</select></label>`:'';
     const body=isAll?allSchedulesTable(list):'<div id="scheduleCalendar"></div>';
-    shell(`<div class="crumb">Trang chủ / Lịch gác thi</div><header class="ph"><div><h1>${esc(title)}</h1><p>${isAll?'Chọn giảng viên để xem lịch tuần hoặc tháng.':isMine?'Xem lịch tuần/tháng; đơn báo bận cũng hiện tại đây.':'Lịch tuần/tháng của giảng viên đã chọn.'}</p></div><div class="ph-r">${options}${isMine?`<button class="btn pri" id="goBusy">${IC.clip} Báo bận ca thi</button>`:''}<button class="btn" id="refresh">${IC.refresh} Làm mới dữ liệu</button></div></header><div class="stats"><div class="stat ic"><div class="si">${IC.clip}</div><div><b>${list.length}</b><span>${isAll?'Tổng lượt phân công':'Tổng số ca'}</span></div></div><div class="stat ic"><div class="si">${IC.cal}</div><div><b>${up}</b><span>Ca sắp tới</span></div></div><div class="stat ic"><div class="si">${IC.ok}</div><div><b>${list.length-up}</b><span>Ca đã qua</span></div></div></div><div class="panel lecturer-calendar-panel">${body}</div>`);
+    shell(`<div class="crumb">Trang chủ / Lịch gác thi</div><header class="ph"><div><h1>${esc(title)}</h1><p>${isAll?'Chọn giảng viên để xem lịch tuần hoặc tháng.':isMine?'Xem lịch tuần/tháng; đơn báo bận cũng hiện tại đây.':'Lịch tuần/tháng của giảng viên đã chọn.'}</p></div><div class="ph-r">${options}${isMine?`<button class="btn pri" id="goBusy">${IC.clip} Báo bận ca thi</button>`:''}<button class="btn" id="refresh">${IC.refresh} Làm mới dữ liệu</button></div></header><section class="panel sched-run-status" id="scheduleRunStatus" role="status" aria-live="polite">${lecturerRunStatusHtml(state.scheduleRunStatus)}</section><div class="stats"><div class="stat ic"><div class="si">${IC.clip}</div><div><b>${list.length}</b><span>${isAll?'Tổng lượt phân công':'Tổng số ca'}</span></div></div><div class="stat ic"><div class="si">${IC.cal}</div><div><b>${up}</b><span>Ca sắp tới</span></div></div><div class="stat ic"><div class="si">${IC.ok}</div><div><b>${list.length-up}</b><span>Ca đã qua</span></div></div></div><div class="panel lecturer-calendar-panel">${body}</div>`);
     if(!isAll)renderCalendarInto('#scheduleCalendar',{duties:list,busyRequests:isMine?(state.busyRequests||[]):[],teaching:state.teachingCalendar||[],busyCalendar:state.busyCalendar||[]});
     const viewer=$('#scheduleViewer');if(viewer)viewer.onchange=()=>{state.scheduleViewer=viewer.value;state.calendarDate=null;renderPage()};
     $('#refresh').onclick=renderPage;
     const goBusy=$('#goBusy');if(goBusy)goBusy.onclick=()=>{state.page='busy';renderPage()};
+  }
+
+  function lecturerRunStatusHtml(run){
+    if(!run)return '<div class="sched-run-empty"><b>Chưa có lần xếp lịch tự động nào gần đây.</b><span>Trạng thái sẽ tự cập nhật tại đây khi quản trị viên bắt đầu xếp lịch.</span></div>';
+    const running=run.status==='RUNNING',phase=run.phase||'',phaseIndex=phase==='preparing'?0:phase==='finding_feasible'?1:phase==='optimizing_soft'?2:3;
+    const labels=['Chuẩn bị dữ liệu','Tìm lịch thỏa ràng buộc cứng','Tối ưu ràng buộc mềm'];
+      const formatDuration=value=>{const elapsed=Math.max(0,Number(value)||0),n=elapsed?Math.ceil(elapsed):0,h=Math.floor(n/3600),m=Math.floor(n%3600/60),s=n%60;return [h,m,s].map(x=>String(x).padStart(2,'0')).join(':')};
+    const started=run.started_at?new Date(run.started_at).toLocaleString('vi-VN'):'';
+    const completed=run.completed_at?new Date(run.completed_at).toLocaleString('vi-VN'):'';
+    const resultLabels={OPTIMAL:'Đã tìm được lịch tối ưu',FEASIBLE:'Đã tìm được lịch phù hợp',INFEASIBLE:'Không tìm được lịch thỏa ràng buộc cứng',UNKNOWN:'Hết thời gian trước khi tìm được lịch',INVALID:'Dữ liệu xếp lịch chưa hợp lệ',ERROR:'Có lỗi khi xếp lịch'};
+    const steps=running?'<div class="sched-run-steps">'+labels.map((label,index)=>'<span class="'+(index<phaseIndex?'done':index===phaseIndex?'current':'')+'"><i>'+(index<phaseIndex?'✓':index+1)+'</i>'+label+'</span>').join('')+'</div><div class="sched-run-track"><i></i></div>':'';
+    const solverStats=running?((Number(run.solutions_found)>0?'<span>Đã tìm thấy '+Number(run.solutions_found).toLocaleString('vi-VN')+' phương án</span>':'')+(run.best_objective!=null?'<span>Điểm đánh giá tốt nhất: '+Number(run.best_objective).toLocaleString('vi-VN')+'</span>':'')):'';
+    const title=running?'Đang xếp lịch tự động':run.status==='FAILED'?'Lần xếp lịch gần nhất bị lỗi':'Lần xếp lịch gần nhất đã hoàn tất';
+    const detail=running?(run.phase_label||'Bộ giải đang xử lý lịch'):(resultLabels[run.result_status]||run.result_status||'Đã kết thúc');
+      const solverMode=Number(run.time_limit_seconds)<=30?'Xếp nhanh · 30 giây':Number(run.time_limit_seconds)>=300?'Tối ưu sâu · 5 phút':'Tiêu chuẩn · 2 phút';
+      const modeSummary='<span>Chế độ: '+solverMode+'</span>';
+    const assignmentSummary=run.assigned_count==null?'':'<span>Đã xếp '+Number(run.assigned_count).toLocaleString('vi-VN')+' / '+Number(run.needed_count||0).toLocaleString('vi-VN')+' lượt · Còn thiếu '+Number(run.missing_count||0).toLocaleString('vi-VN')+'</span>';
+      return '<div class="sched-run-head"><div><b>'+title+'</b><span>Đợt thi '+esc(run.ma_dot||'')+' · Bắt đầu '+esc(started)+'</span></div><strong class="sched-run-clock">'+formatDuration(run.elapsed_seconds)+'</strong></div>'+steps+'<div class="sched-run-meta">'+modeSummary+(running?'<span>'+esc(detail)+'</span>'+solverStats:'<span>Kết quả: '+esc(detail)+'</span>'+assignmentSummary+'<span>Thời gian chạy: '+formatDuration(run.elapsed_seconds)+'</span><span>Hoàn tất: '+esc(completed)+'</span>')+'</div>'+(running?'<p class="sched-run-note">Điểm đánh giá càng thấp thì lịch càng tốt. Bộ giải chưa thể đưa ra phần trăm hoàn thành chính xác.</p>':'');
+  }
+
+  let runStatusPollBusy=false;
+  async function refreshScheduleRunStatus(){
+    if(!state.user||state.page!=='schedule'||document.visibilityState!=='visible'||runStatusPollBusy)return;
+    runStatusPollBusy=true;
+    try{
+      const result=await req('/xep-lich/run-status');
+      state.scheduleRunStatus=result.run||null;
+      const node=$('#scheduleRunStatus');if(node)node.innerHTML=lecturerRunStatusHtml(state.scheduleRunStatus);
+    }catch(_){/* Keep the schedule usable if the status endpoint is temporarily unavailable. */}
+    finally{runStatusPollBusy=false}
   }
 
   function allSchedulesTable(rows){
@@ -981,6 +1013,7 @@
     } catch(e) { location.replace('login.html'); }
   }
   let scheduleRefreshTimer=null;
+  setInterval(refreshScheduleRunStatus,2000);
   function refreshScheduleWhenVisible(){
     if(!state.user||state.page!=='schedule'||document.visibilityState!=='visible')return;
     clearTimeout(scheduleRefreshTimer);

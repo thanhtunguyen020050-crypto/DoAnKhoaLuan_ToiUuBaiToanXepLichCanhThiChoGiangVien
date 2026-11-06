@@ -29,6 +29,7 @@ window.API = (() => {
       const validationErrors=Array.isArray(d)?d.map(x=>`${Array.isArray(x.loc)?x.loc.join('.'):'Request'}: ${x.msg||'Dữ liệu không hợp lệ'}`).join('\n'):'';
       const msg=typeof d==='string'?d:(d?.message||validationErrors||((d?.errors||d?.violations||[]).map(x=>typeof x==='string'?x:`Dòng ${x.line}: ${x.name||''} ${x.msg||''}`).join('\n'))||('API lỗi '+r.status));
       const err=new Error(exposeServerError?msg:friendlyError(msg, r.status));
+      err.status=r.status;
       err.detail=exposeServerError?d:(d==='Not Found'?'Not Found':(d&&typeof d==='object'?{
         ...d,
         message:d.message?friendlyError(d.message,r.status):d.message,
@@ -85,6 +86,11 @@ window.API = (() => {
     async scheduleSharing(){return req('/user/admin/schedule-sharing')},
     async setScheduleSharing(enabled){return req('/user/admin/schedule-sharing',{method:'PUT',body:JSON.stringify({enabled})})},
     async solveSchedule(payload){return req('/xep-lich/cpsat',{method:'POST',body:JSON.stringify(payload)})},
+    async startSchedule(payload){return req('/xep-lich/cpsat/start',{method:'POST',body:JSON.stringify(payload)})},
+    async scheduleResult(maDot,runId){return req('/xep-lich/cpsat/result/'+encodeURIComponent(maDot)+'/'+encodeURIComponent(runId))},
+    async scheduleRunStatus(){return req('/xep-lich/run-status')},
+    async softRuleConfig(maDot){return req('/xep-lich/soft-config/'+encodeURIComponent(maDot))},
+    async saveSoftRuleConfig(maDot,rules){return req('/xep-lich/soft-config/'+encodeURIComponent(maDot),{method:'PUT',body:JSON.stringify({rules})})},
     async latestDot(){return req('/dot-thi/moi-nhat')},
     async dots(){return req('/dot-thi')},
     async createDot(x){return req('/dot-thi',{method:'POST',body:JSON.stringify(x)})},
@@ -114,7 +120,8 @@ window.API = (() => {
     async replaceBusy(id,items){return req('/lich-ban/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(items)})},
     async importBusy(rows,filename){return req('/lich-ban/import?filename='+encodeURIComponent(filename||''),{method:'POST',body:JSON.stringify(rows)})},
     async importDuty(maDot,rows,filename){return req('/truc-de/import',{method:'POST',body:JSON.stringify({ma_dot:maDot,nguon_file:filename||'',assignments:rows})})},
-    async dutyAssignments(maDot){return req('/truc-de?ma_dot='+encodeURIComponent(maDot))},
+    async dutyAssignments(maDot){const query=maDot==null||maDot===''?'':'?ma_dot='+encodeURIComponent(maDot);return req('/truc-de'+query)},
+    async rb9OtherExamEvents(maDot){return req('/rb9/other-exam-events?ma_dot='+encodeURIComponent(maDot))},
     async clearAllDuty(maDot){return req('/truc-de/all?ma_dot='+encodeURIComponent(maDot),{method:'DELETE'})},
     async clearLecturerDuty(maDot,maGv){return req('/truc-de/'+encodeURIComponent(maDot)+'/'+encodeURIComponent(maGv),{method:'DELETE'})},
     async clearAllTeaching(){return req('/lich-day/all',{method:'DELETE'})},

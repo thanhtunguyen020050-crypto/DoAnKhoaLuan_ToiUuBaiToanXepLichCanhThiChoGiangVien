@@ -19,6 +19,7 @@ class LichDayImportRow(BaseModel):
     date: str
     start: int
     end: int
+    room: str | None = Field(default=None, max_length=100)
     line: int | None = None
 
 

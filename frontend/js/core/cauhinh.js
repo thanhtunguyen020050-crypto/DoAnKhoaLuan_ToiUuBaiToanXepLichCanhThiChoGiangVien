@@ -14,17 +14,20 @@ const HARD=[
   {id:'H4',name:'Không xếp vào lịch dạy & trực đề',desc:'Không xếp giảng viên vào thời gian đã có lịch dạy hoặc lịch trực đề.'},
   {id:'H5',name:'Một buổi một loại ca',desc:'Trong cùng buổi chỉ gác trắc nghiệm hoặc tự luận; ưu tiên xếp theo cụm ca.'},
   {id:'H6',name:'Phải né lịch bận mức 1',desc:'Đi công tác, họp theo quyết định của Trường là ràng buộc cứng; tuyệt đối không xếp vào thời gian này.'},
-  {id:'H7',name:'Thời gian di chuyển khác cơ sở',desc:'Nếu lịch dạy/trực đề và ca thi khác cơ sở, phải chừa ít nhất một tiết để di chuyển.'},
-  {id:'H8',name:'Giới hạn tải khi nhận ca tối',desc:'Chỉ xếp ca từ tiết 13 khi tổng tiết dạy, trực đề và coi thi trong ngày không vượt quá 12 tiết.'}
+  {id:'H7',name:'Thời gian di chuyển khác cơ sở',desc:'Chỉ so lịch dạy ở cơ sở khác với ca thi cùng ngày; phải chừa đủ số tiết di chuyển tối thiểu theo cấu hình.'},
+  {id:'H9',name:'Giới hạn ca trong ngày và lịch nối tiếp',desc:'Số ca trắc nghiệm và tự luận tối đa trong ngày được xác định dựa trên lịch dạy và lịch trực đề.'}
 ];
 const SOFT=[
-  {id:'S1',name:'Cân bằng ca sáng/tối',desc:'Phân bổ ca sáng và tối cho giảng viên; giữ số ca tối giữa mọi người cân bằng.'},
-  {id:'S2',name:'Giảm ca gãy',desc:'Hạn chế khoảng trống 1–2 tiết giữa lịch dạy/trực đề và giờ coi thi.'},
-  {id:'S3',name:'Gom cụm ca thi',desc:'Ưu tiên xếp nối tiếp sau lịch dạy/trực đề và dồn định mức gọn trong một tuần.'},
-  {id:'S4',name:'Cân bằng hình thức thi',desc:'Phân bổ đồng đều ca Trắc nghiệm và Tự luận cho từng giảng viên trong đợt.'},
-  {id:'S5',name:'Né lịch bận mức 2',desc:'Ưu tiên né 70%–90% lịch gia đình, hiếu hỷ đã đăng ký.'},
-  {id:'S6',name:'Né lịch bận mức 3',desc:'Né lịch khẩn cấp/đột xuất khi không ảnh hưởng các ưu tiên cao hơn.'}
+  {id:'RB8',name:'Tránh ca tối khi lịch trong ngày đã dày',desc:'Ưu tiên tránh xếp ca tối (bắt đầu từ tiết 13) nếu tổng số tiết dạy, trực đề và coi thi trong ngày vượt 12 tiết. Phạt 10.000.000 điểm cho mỗi giảng viên-ngày vi phạm.'},
+  {id:'S1',name:'Giảm ngày tới trường, tránh ngày chỉ có một ca thi',desc:'Gom lịch dạy, trực đề và coi thi vào ít ngày nhất. Tránh ngày chỉ có đúng 1 ca coi thi mà không có lịch dạy hoặc trực đề. Mỗi ngày có lịch phạt 1.000.000 điểm; ngày rơi vào trường hợp trên phạt thêm 1.000.000 điểm.'},
+  {id:'S3',name:'Giảm ca gãy',desc:'Hạn chế khoảng trống 1–2 tiết quanh lịch cố định và giữa các ca thi. Phạt 500.000 điểm mỗi tiết trống.'},
+  {id:'S2',name:'Cân bằng ca sáng/tối',desc:'Cân bằng ca sáng, chiều và tối theo định mức. Phạt 200.000 điểm mỗi đơn vị lệch; ca tối tính gấp đôi.'},
+  {id:'S4',name:'Gom cụm ca thi',desc:'Gom lịch coi thi của từng giảng viên vào ít tuần nhất. Phạt 10.000 điểm cho mỗi giảng viên-tuần có lịch.'},
+  {id:'S5',name:'Cân bằng hình thức thi',desc:'Cân bằng Trắc nghiệm và Tự luận theo định mức. Phạt 1.000 điểm mỗi đơn vị lệch.'},
+  {id:'S6',name:'Né lịch bận mức 2',desc:'Cố gắng tránh lịch bận mức 2 đã đăng ký. Phạt 100 điểm cho mỗi ca xếp trùng.'},
+  {id:'S7',name:'Né lịch bận mức 3',desc:'Cố gắng tránh lịch bận mức 3. Phạt 10 điểm cho mỗi ca xếp trùng.'}
 ];
+const SOFT_POINTS={RB8:10000000,S1:{perDay:1000000,singletonExtra:1000000},S3:500000,S2:200000,S4:10000,S5:1000,S6:100,S7:10};
 const svg=(p,s=16)=>'<svg viewBox="0 0 24 24" width="'+s+'" height="'+s+'" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+p+'</svg>';
 const LB={LT:'Trắc nghiệm',TN:'Trắc nghiệm',TL:'Tự luận'};
 const IC={

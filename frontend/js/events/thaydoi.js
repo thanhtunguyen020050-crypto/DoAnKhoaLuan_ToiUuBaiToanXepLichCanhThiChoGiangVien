@@ -79,7 +79,17 @@ const C={
   'dot-lec-all'(t){dotLecFiltered().forEach(l=>t.checked?dotPick.sel.add(String(l.id)):dotPick.sel.delete(String(l.id)));$('#dotLecList').innerHTML=dotLecRows();$('#dotLecCount').textContent=dotLecCount();updateDotLecSelectAll()},
   ld(t){F.ld=t.value;render()},ls(t){F.ls=t.value;render()},ed(t){F.ed=t.value;render()},ek(t){F.ek=t.value;render()},sd(t){F.sd=t.value;render()},lack(t){F.lack=t.checked;render()},
   s2n(t){S.soft.S2.n=+t.value;save()},
-  'soft-on'(t){S.soft[t.dataset.id].on=t.checked;save();render()},
+  'soft-on'(t){
+    const id=t.dataset.id,previous=S.soft[id]?.on!==false;
+    S.soft[id].on=t.checked;save();render();
+    if(!window.__MA_DOT)return;
+    API.saveSoftRuleConfig(window.__MA_DOT,{[id]:t.checked}).then(()=>{
+      save();
+    }).catch(error=>{
+      S.soft[id].on=previous;save();render();
+      toast('Không lưu được cấu hình vào database: '+error.message);
+    });
+  },
   'busy-file'(t){
     const f=t.files[0];if(!f)return;
     readTable(f).then(rows=>{

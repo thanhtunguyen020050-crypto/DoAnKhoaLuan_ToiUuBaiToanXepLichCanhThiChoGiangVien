@@ -5,6 +5,7 @@ const ADMIN_SCRIPTS = [
   '/js/core/cauhinh.js',
   '/js/core/dulieu.js',
   '/js/core/tienich.js',
+  '/js/core/rb7.js',
   '/js/core/xeplich.js',
   '/js/pages/giaodien.js',
   '/js/pages/hienthi.js',

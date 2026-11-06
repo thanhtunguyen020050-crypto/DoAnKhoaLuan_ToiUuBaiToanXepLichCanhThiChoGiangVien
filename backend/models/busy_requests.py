@@ -5,8 +5,10 @@ Bảo toàn thuật toán CP-SAT và các chức năng cũ.
 
 try:
     from ..schemas.busy_requests import BusyRequestCreateIn, BusyRequestNominateIn, BusyRequestApproveIn, BusyRequestRejectIn
+    from ..rb7 import read_min_travel_slots, rb7_teaching_exam_violation
 except ImportError:
     from schemas.busy_requests import BusyRequestCreateIn, BusyRequestNominateIn, BusyRequestApproveIn, BusyRequestRejectIn
+    from rb7 import read_min_travel_slots, rb7_teaching_exam_violation
 
 from datetime import datetime, timedelta
 import json
@@ -111,26 +113,12 @@ def _calendar_period(row, columns):
     return None, None
 
 def _calendar_location(row, columns):
-    aliases = {'phong', 'phonghoc', 'phongthi', 'diadiem', 'coso', 'campus', 'location', 'address'}
+    aliases = {'phong'}
     for name, value in _calendar_record(row, columns).items():
         key = _calendar_key(name)
         if key in aliases and value:
             return str(value).strip()
     return ''
-
-def _campus_key(value):
-    raw = unicodedata.normalize('NFKD', str(value or '')).encode('ascii', 'ignore').decode().lower()
-    known = (
-        ('tan ky tan quy', ('tan ky tan quy', '93 tan ky')),
-        ('le trong tan', ('le trong tan', '140 le trong tan')),
-    )
-    for key, variants in known:
-        if any(variant in raw for variant in variants):
-            return key
-    # Room identifiers often differ while the campus address after a dash is identical.
-    parts = re.split(r'\s*[-–—]\s*', raw)
-    campus = parts[-1] if len(parts) > 1 else raw
-    return re.sub(r'[^a-z0-9]+', ' ', campus).strip()
 
 def _exam_form_key(value):
     normalized = _calendar_key(value)
@@ -192,15 +180,6 @@ def _load_lecturer_calendar(cur, table_name, ma_gv):
                        'location': _calendar_location(row, columns), 'source': table_name})
     return events
 
-def _travel_gap_violated(event, target_start, target_end, target_location):
-    if not event.get('location') or not target_location or _campus_key(event['location']) == _campus_key(target_location):
-        return False
-    if event['end'] < target_start:
-        return target_start - event['end'] < 2
-    if target_end < event['start']:
-        return event['start'] - target_end < 2
-    return False
-
 def _validate_replacement_lecturer(cur, ma_gv_thay_the: str, ma_ca: str, ma_gv_cu: str) -> list[str]:
     """Check hard time constraints for a lecturer accepting an approved cover."""
     errors = []
@@ -216,13 +195,16 @@ def _validate_replacement_lecturer(cur, ma_gv_thay_the: str, ma_ca: str, ma_gv_c
         return [f"Giảng viên {gv_row[0]} ({ma_gv_thay_the}) không còn công tác."]
 
     # Lấy thông tin ca thi
-    cur.execute("""SELECT c.MaCa, c.MaDot, c.NgayThi, c.TuTiet, c.DenTiet, c.Buoi, c.NhomHinhThucThi, c.HinhThucThi, c.PhongThi
+    cur.execute("""SELECT c.MaCa, c.MaDot, c.NgayThi, c.TuTiet, c.DenTiet, c.Buoi, c.NhomHinhThucThi, c.HinhThucThi
                    FROM dbo.CaThi c WHERE c.MaCa = ?""", ma_ca)
     ca_row = cur.fetchone()
     if not ca_row:
         return ["Ca thi không tồn tại."]
 
-    ma_dot, ngay_thi, tu_tiet, den_tiet, buoi, nhom_hinh_thuc, phong_thi = ca_row[1], ca_row[2], ca_row[3], ca_row[4], ca_row[5], ca_row[6], ca_row[8]
+    ma_dot, ngay_thi, tu_tiet, den_tiet, buoi, nhom_hinh_thuc = (
+        ca_row[1], ca_row[2], ca_row[3], ca_row[4], ca_row[5], ca_row[6]
+    )
+    min_travel_slots = read_min_travel_slots(cur, ma_dot)
 
     # Kiểm tra đã được phân công ca này chưa
     cur.execute("SELECT 1 FROM dbo.PhanCongCoiThi WHERE MaGV = ? AND MaCa = ?", ma_gv_thay_the, ma_ca)
@@ -239,21 +221,21 @@ def _validate_replacement_lecturer(cur, ma_gv_thay_the: str, ma_ca: str, ma_gv_c
     if conflict_ca:
         errors.append(f"[RB3] Trùng thời gian với ca {conflict_ca[0]} (tiết {conflict_ca[1]}–{conflict_ca[2]}).")
 
-    # RB4/RB7: Teaching and paper-duty calendars can have schema-dependent
-    # date/period/location names; normalize those rows before checking.
-    calendar_events = []
+    # RB4 applies to teaching and paper-duty calendars; RB7 applies to teaching only.
     for table_name, label in (('LichDayGV', 'lịch dạy'), ('PhanCongTrucDe', 'lịch trực đề')):
         for event in _load_lecturer_calendar(cur, table_name, ma_gv_thay_the):
             if event['date'] != _calendar_date(ngay_thi):
                 continue
-            if not phong_thi or not event['location']:
-                errors.append(f"[RB7] Thiếu thông tin phòng/cơ sở của {label} hoặc ca thi nên không thể xác minh thời gian di chuyển.")
-                continue
-            calendar_events.append(event)
             if event['start'] <= den_tiet and tu_tiet <= event['end']:
                 errors.append(f"[RB4] Trùng {label} (tiết {event['start']}–{event['end']}).")
-            elif _travel_gap_violated(event, tu_tiet, den_tiet, phong_thi):
-                errors.append(f"[RB7] Không đủ 1 tiết di chuyển giữa {label} và ca thi do khác cơ sở.")
+            elif table_name == 'LichDayGV' and rb7_teaching_exam_violation(
+                    event['location'], event['start'], event['end'], tu_tiet, den_tiet,
+                    min_travel_slots):
+                errors.append(
+                    f"[RB7] Thiếu {min_travel_slots} tiết di chuyển giữa lịch dạy "
+                    f"(tiết {event['start']}–{event['end']}, phòng/cơ sở {event['location']}) "
+                    f"và ca thi {ma_ca}."
+                )
 
     # RB6: Trùng lịch bận mức 1 (bắt buộc né)
     cur.execute("""SELECT TuTiet, DenTiet, LyDo FROM dbo.LichBanGV
@@ -263,17 +245,6 @@ def _validate_replacement_lecturer(cur, ma_gv_thay_the: str, ma_ca: str, ma_gv_c
     conflict_ban = cur.fetchone()
     if conflict_ban:
         errors.append(f"[RB6] Trùng lịch bận mức 1: {conflict_ban[2]} (tiết {conflict_ban[0]}–{conflict_ban[1]}).")
-
-    # Keep one full lesson free when another already-assigned exam is on a
-    # different campus on the same day.
-    cur.execute('''SELECT c.MaCa,c.TuTiet,c.DenTiet,c.PhongThi
-                   FROM dbo.PhanCongCoiThi p JOIN dbo.CaThi c ON c.MaCa=p.MaCa
-                   WHERE p.MaGV=? AND c.MaCa<>? AND c.NgayThi=?''',
-                ma_gv_thay_the, ma_ca, ngay_thi)
-    for existing in cur.fetchall():
-        event = {'start': existing[1], 'end': existing[2], 'location': existing[3] or ''}
-        if _travel_gap_violated(event, tu_tiet, den_tiet, phong_thi):
-            errors.append(f"[RB7] Không đủ 1 tiết di chuyển giữa ca {existing[0]} và ca được nhận do khác cơ sở.")
 
     # RB5: compare normalized format labels so NULLs or accent differences cannot bypass it.
     cur.execute("""SELECT c.MaCa, c.NhomHinhThucThi, c.HinhThucThi FROM dbo.PhanCongCoiThi p

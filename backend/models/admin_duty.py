@@ -124,17 +124,24 @@ def import_duty(x: TrucDeImportIn):
         raise HTTPException(400, f'Could not import exam-paper duty into SQL Server: {e}')
 
 
-def list_duty(ma_dot: str):
+def list_duty(ma_dot: str | None = None):
     try:
         with get_connection() as cn:
             cur = cn.cursor()
             _ensure_table(cur)
-            cur.execute('''
+            query = '''
                 SELECT d.ID,d.MaDot,d.MaHP,d.MonThi,d.NgayThi,d.Thu,d.TuTiet,d.DenTiet,
                        d.MaGV,g.HoTen,d.SoDienThoai,d.GhiChu,d.NguonFile,d.ThoiGianImport
                 FROM dbo.PhanCongTrucDe d JOIN dbo.GiangVien g ON g.MaGV=d.MaGV
-                WHERE d.MaDot=? ORDER BY d.NgayThi,d.TuTiet,d.MaHP,g.HoTen
-            ''', ma_dot)
+            '''
+            if ma_dot:
+                cur.execute(query + '''
+                    WHERE d.MaDot=? ORDER BY d.NgayThi,d.TuTiet,d.MaHP,g.HoTen
+                ''', ma_dot)
+            else:
+                cur.execute(query + '''
+                    ORDER BY d.NgayThi,d.TuTiet,d.MaHP,g.HoTen
+                ''')
             return {'items': dict_rows(cur)}
     except Exception as e:
         raise HTTPException(500, f'Could not read exam-paper duty: {e}')

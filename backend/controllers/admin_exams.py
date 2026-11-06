@@ -13,9 +13,9 @@ except ImportError:
     from schemas.admin import DotThiIn, CaThiIn, LuuPhanCongIn, DinhMucChungIn, DinhMucGiangVienIn, TrucDeImportIn
 
 try:
-    from ..models.admin_exams import list_exam_periods as _model_list_exam_periods, latest_exam_period as _model_latest_exam_period, create_exam_period as _model_create_exam_period, update_exam_period as _model_update_exam_period, delete_exam_period as _model_delete_exam_period, list_exam_shifts as _model_list_exam_shifts, save_exam_assignments as _model_save_exam_assignments, remove_saved_assignments as _model_remove_saved_assignments, create_exam_shift as _model_create_exam_shift, update_exam_shift as _model_update_exam_shift, clear_all_exams as _model_clear_all_exams, delete_exam_shift as _model_delete_exam_shift, set_common_quota as _model_set_common_quota, set_lecturer_quota as _model_set_lecturer_quota
+    from ..models.admin_exams import list_exam_periods as _model_list_exam_periods, latest_exam_period as _model_latest_exam_period, create_exam_period as _model_create_exam_period, update_exam_period as _model_update_exam_period, delete_exam_period as _model_delete_exam_period, list_exam_shifts as _model_list_exam_shifts, list_rb9_other_exam_events as _model_list_rb9_other_exam_events, save_exam_assignments as _model_save_exam_assignments, remove_saved_assignments as _model_remove_saved_assignments, create_exam_shift as _model_create_exam_shift, update_exam_shift as _model_update_exam_shift, clear_all_exams as _model_clear_all_exams, delete_exam_shift as _model_delete_exam_shift, set_common_quota as _model_set_common_quota, set_lecturer_quota as _model_set_lecturer_quota
 except ImportError:
-    from models.admin_exams import list_exam_periods as _model_list_exam_periods, latest_exam_period as _model_latest_exam_period, create_exam_period as _model_create_exam_period, update_exam_period as _model_update_exam_period, delete_exam_period as _model_delete_exam_period, list_exam_shifts as _model_list_exam_shifts, save_exam_assignments as _model_save_exam_assignments, remove_saved_assignments as _model_remove_saved_assignments, create_exam_shift as _model_create_exam_shift, update_exam_shift as _model_update_exam_shift, clear_all_exams as _model_clear_all_exams, delete_exam_shift as _model_delete_exam_shift, set_common_quota as _model_set_common_quota, set_lecturer_quota as _model_set_lecturer_quota
+    from models.admin_exams import list_exam_periods as _model_list_exam_periods, latest_exam_period as _model_latest_exam_period, create_exam_period as _model_create_exam_period, update_exam_period as _model_update_exam_period, delete_exam_period as _model_delete_exam_period, list_exam_shifts as _model_list_exam_shifts, list_rb9_other_exam_events as _model_list_rb9_other_exam_events, save_exam_assignments as _model_save_exam_assignments, remove_saved_assignments as _model_remove_saved_assignments, create_exam_shift as _model_create_exam_shift, update_exam_shift as _model_update_exam_shift, clear_all_exams as _model_clear_all_exams, delete_exam_shift as _model_delete_exam_shift, set_common_quota as _model_set_common_quota, set_lecturer_quota as _model_set_lecturer_quota
 
 try:
     from ..models.admin_duty import import_duty as _model_import_duty, list_duty as _model_list_duty, clear_all_duty as _model_clear_all_duty, clear_lecturer_duty as _model_clear_lecturer_duty
@@ -47,6 +47,11 @@ def delete_exam_period(ma_dot: str):
 @router.get('/api/ca-thi')
 def list_exam_shifts(ma_dot: str | None=None):
     return _model_list_exam_shifts(ma_dot=ma_dot)
+
+
+@router.get('/api/rb9/other-exam-events')
+def list_rb9_other_exam_events(ma_dot: str, admin_user: str = Depends(require_admin)):
+    return _model_list_rb9_other_exam_events(ma_dot=ma_dot)
 
 @router.post('/api/dot-thi/{ma_dot}/phan-cong')
 def save_exam_assignments(ma_dot: str, x: LuuPhanCongIn):
@@ -88,7 +93,7 @@ def import_exam_paper_duty(x: TrucDeImportIn, admin_user: str = Depends(require_
 
 
 @router.get('/api/truc-de')
-def list_exam_paper_duty(ma_dot: str, admin_user: str = Depends(require_admin)):
+def list_exam_paper_duty(ma_dot: str | None = None, admin_user: str = Depends(require_admin)):
     return _model_list_duty(ma_dot=ma_dot)
 
 

@@ -6,14 +6,16 @@ from fastapi import APIRouter, HTTPException
 
 try:
     from ..ketnoi_sql import get_connection
+    from ..rb7 import read_min_travel_slots, rb7_teaching_exam_violation
     from ..schemas.admin import DotThiIn, CaThiIn, LuuPhanCongIn, DinhMucChungIn, DinhMucGiangVienIn
     from .admin_helpers import dict_rows, _thu_vn, _drain
-    from .busy_requests import _calendar_date, _load_lecturer_calendar, _travel_gap_violated
+    from .busy_requests import _calendar_date, _load_lecturer_calendar
 except ImportError:
     from ketnoi_sql import get_connection
+    from rb7 import read_min_travel_slots, rb7_teaching_exam_violation
     from schemas.admin import DotThiIn, CaThiIn, LuuPhanCongIn, DinhMucChungIn, DinhMucGiangVienIn
     from models.admin_helpers import dict_rows, _thu_vn, _drain
-    from models.busy_requests import _calendar_date, _load_lecturer_calendar, _travel_gap_violated
+    from models.busy_requests import _calendar_date, _load_lecturer_calendar
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +79,27 @@ def list_exam_shifts(ma_dot: str | None=None):
     except Exception as e:
         raise HTTPException(500, f'Lỗi đọc ca thi: {e}')
 
+
+def list_rb9_other_exam_events(ma_dot: str):
+    """Read other-round assignments that SQL RB9 includes in continuous runs."""
+    try:
+        with get_connection() as cn:
+            cur = cn.cursor()
+            cur.execute('''
+                SELECT p.MaGV,c.MaDot,c.NgayThi AS NgayThi,c.TuTiet,c.DenTiet
+                FROM dbo.PhanCongCoiThi p
+                JOIN dbo.CaThi c ON c.MaCa=p.MaCa
+                WHERE c.MaDot<>?
+                  AND EXISTS (
+                      SELECT 1 FROM dbo.DinhMucPhanCong d
+                      WHERE d.MaDot=? AND d.MaGV=p.MaGV
+                  )
+                ORDER BY p.MaGV,c.NgayThi,c.TuTiet,c.DenTiet,c.MaCa
+            ''', ma_dot, ma_dot)
+            return {'items': dict_rows(cur)}
+    except Exception as e:
+        raise HTTPException(500, f'Lỗi đọc lịch thi các đợt khác để kiểm tra RB9: {e}')
+
 def save_exam_assignments(ma_dot: str, x: LuuPhanCongIn):
     """Validate and save assignments against the quotas already stored in SQL."""
     pairs = [(a.ma_ca.strip(), a.ma_gv.strip()) for a in x.assignments]
@@ -86,6 +109,7 @@ def save_exam_assignments(ma_dot: str, x: LuuPhanCongIn):
     try:
         with get_connection() as cn:
             cur = cn.cursor()
+            min_travel_slots = read_min_travel_slots(cur, ma_dot)
             # Refresh integer quotas using only the persisted SQL percentages.
             # The browser payload x.dinh_muc is deliberately ignored here.
             cur.execute('EXEC dbo.sp_TinhDinhMucTheoTyLe ?', ma_dot)
@@ -258,24 +282,13 @@ def save_exam_assignments(ma_dot: str, x: LuuPhanCongIn):
                                 and left_form != right_form:
                             raise HTTPException(409,
                                 f'Giảng viên {ma_gv} bị xếp trộn hình thức thi trong cùng buổi ngày {left[2]}.')
-                        if _travel_gap_violated(
-                                {'start': left[3], 'end': left[4], 'location': left[8] or ''},
-                                right[3], right[4], right[8] or ''):
-                            raise HTTPException(409,
-                                f'Giảng viên {ma_gv} chưa có đủ 1 tiết di chuyển giữa ca {left[1]} và {right[1]}.')
-                        if _travel_gap_violated(
-                                {'start': right[3], 'end': right[4], 'location': right[8] or ''},
-                                left[3], left[4], left[8] or ''):
-                            raise HTTPException(409,
-                                f'Giảng viên {ma_gv} chưa có đủ 1 tiết di chuyển giữa ca {right[1]} và {left[1]}.')
-
                 calendars = (
                     ('LichDayGV', 'lịch dạy', _load_lecturer_calendar(cur, 'LichDayGV', ma_gv)),
                     ('PhanCongTrucDe', 'lịch trực đề', _load_lecturer_calendar(cur, 'PhanCongTrucDe', ma_gv)),
                 )
                 for shift in shifts:
                     shift_date = _calendar_date(shift[2])
-                    for _, label, calendar in calendars:
+                    for table_name, label, calendar in calendars:
                         for event in calendar:
                             if event['date'] != shift_date:
                                 continue
@@ -283,9 +296,13 @@ def save_exam_assignments(ma_dot: str, x: LuuPhanCongIn):
                                 raise HTTPException(409,
                                     f"Giảng viên {ma_gv} bị trùng {label} tiết {event['start']}–{event['end']} "
                                     f"với ca {shift[1]}.")
-                            if _travel_gap_violated(event, shift[3], shift[4], shift[8] or ''):
+                            if table_name == 'LichDayGV' and rb7_teaching_exam_violation(
+                                    event['location'], event['start'], event['end'], shift[3], shift[4],
+                                    min_travel_slots):
                                 raise HTTPException(409,
-                                    f"Giảng viên {ma_gv} chưa có đủ 1 tiết di chuyển giữa {label} và ca {shift[1]}.")
+                                    f"[RB7] Giảng viên {ma_gv} thiếu {min_travel_slots} tiết di chuyển "
+                                    f"giữa lịch dạy (tiết {event['start']}–{event['end']}, "
+                                    f"phòng/cơ sở {event['location']}) và ca {shift[1]}.")
                     cur.execute('''SELECT TOP 1 b.TuTiet,b.DenTiet,b.LyDo
                                    FROM dbo.LichBanGV b
                                    WHERE b.MaGV=? AND b.UuTien=1 AND b.NgayBan=?

@@ -1,5 +1,7 @@
 """Router quản trị - lịch dạy và lịch bận của API FastAPI."""
 
+from datetime import date
+
 from fastapi import APIRouter, HTTPException
 
 try:
@@ -15,7 +17,7 @@ def teaching_schedule(ma_gv: str):
     try:
         with get_connection() as cn:
             cur = cn.cursor()
-            cur.execute('SELECT ID,CONVERT(varchar(10),NgayDay,23) NgayDay,TuTiet,DenTiet,NguonFile,GhiChu FROM dbo.LichDayGV WHERE MaGV=? ORDER BY NgayDay,TuTiet,DenTiet', ma_gv)
+            cur.execute('SELECT ID,CONVERT(varchar(10),NgayDay,23) NgayDay,TuTiet,DenTiet,NguonFile,GhiChu,Phong FROM dbo.LichDayGV WHERE MaGV=? ORDER BY NgayDay,TuTiet,DenTiet', ma_gv)
             return {'items': dict_rows(cur)}
     except Exception as e:
         raise HTTPException(500, f'Lỗi đọc lịch dạy: {e}')
@@ -29,7 +31,9 @@ def replace_teaching(ma_gv: str, items: list[dict]):
                 raise HTTPException(404, 'Giảng viên không tồn tại hoặc không còn công tác.')
             cur.execute('DELETE FROM dbo.LichDayGV WHERE MaGV=?', ma_gv)
             for x in items:
-                cur.execute('EXEC dbo.sp_ThemLichDayGV ?,?,?,?,?,?', ma_gv, x['ngay_day'], x['tu_tiet'], x['den_tiet'], x.get('nguon_file'), x.get('ghi_chu'))
+                cur.execute('EXEC dbo.sp_ThemLichDayGV ?,?,?,?,?,?,?',
+                            ma_gv, x['ngay_day'], x['tu_tiet'], x['den_tiet'],
+                            x.get('nguon_file'), x.get('ghi_chu'), x.get('phong', x.get('room')))
             cn.commit()
             return {'ok': True, 'count': len(items)}
     except HTTPException:
@@ -63,15 +67,24 @@ def import_teaching(rows: list[LichDayImportRow], filename: str | None=None):
                 raise HTTPException(status_code=400, detail={'message': 'Import lịch dạy bị từ chối vì có giảng viên chưa khớp CSDL.', 'errors': errors})
             total_inserted = 0
             for ma, items in grouped.items():
-                cur.execute('DELETE FROM dbo.LichDayGV WHERE MaGV=?', ma)
                 seen = set()
+                tvp_rows = []
                 for r in items:
-                    key = (r.date, r.start, r.end)
+                    teaching_date = (
+                        r.date if isinstance(r.date, date)
+                        else date.fromisoformat(str(r.date)[:10])
+                    )
+                    key = (teaching_date, r.start, r.end)
                     if key in seen:
                         continue
                     seen.add(key)
-                    cur.execute('EXEC dbo.sp_ThemLichDayGV ?,?,?,?,?,?', ma, r.date, r.start, r.end, filename, None)
-                    total_inserted += 1
+                    tvp_rows.append((teaching_date, r.start, r.end, getattr(r, 'room', None)))
+                tvp = ('LichDayGVInput_RB7', 'dbo', *tvp_rows)
+                cur.execute(
+                    'EXEC dbo.sp_ThayTheLichDayGV_RB7 ?, ?, ?',
+                    (ma, filename, tvp),
+                )
+                total_inserted += len(tvp_rows)
             cn.commit()
             return {'ok': True, 'teachers': len(grouped), 'rows': total_inserted, 'duplicates_skipped': len(rows) - total_inserted}
     except HTTPException:

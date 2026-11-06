@@ -31,6 +31,8 @@ Authentication: Windows/Trusted Connection
 ## Chức năng đặt định mức chung
 SQL đã có `dbo.sp_DatDinhMucChung`. Thủ tục cập nhật/tạo định mức rồi gọi `dbo.sp_TinhDinhMucTheoTyLe`, dùng Largest Remainder để tổng `SoCaQuyDinh` khớp tổng nhu cầu `SoGVCanCap`.
 
+Script `database/DB_XepLichCoiThi_TheoKhoa_RangBuoc.sql` tạo cấu hình bật/tắt ràng buộc mềm theo từng đợt trong `CauHinhRangBuocMem`. Giới hạn tải ca tối RB8 là tiêu chí mềm ưu tiên cao nhất (100.000.000 điểm mỗi giảng viên-ngày vi phạm); các mức ưu tiên sau giảm theo cấp số chia 10. RB8 được báo cáo riêng và không chặn lưu/chốt lịch. Ràng buộc di chuyển khác cơ sở (H7) vẫn được backend kiểm tra trước khi lưu lịch.
+
 
 ## Phân tách Lịch dạy và Lịch bận
 - `LichDayGV`: dữ liệu IMPORT từ lịch giảng dạy chính thức; là ràng buộc cứng (hard constraint) 100%, tuyệt đối không được xếp gác trùng. Import chỉ khớp với giảng viên đã có trong CSDL, không tự tạo giảng viên.

@@ -4,10 +4,17 @@ from typing import Any
 
 
 class ScheduleRequest(BaseModel):
+    ma_dot: str | None = None
     lecturers: list[dict[str, Any]] = Field(default_factory=list)
     exams: list[dict[str, Any]] = Field(default_factory=list)
     soft: dict[str, Any] = Field(default_factory=dict)
-    time_limit_seconds: float = Field(default=20, ge=1, le=120)
+    soft_weights: dict[str, int] = Field(default_factory=dict)
+    time_limit_seconds: float = Field(default=120, ge=1, le=300)
+    feasibility_only: bool = False
+
+
+class SoftRulesUpdate(BaseModel):
+    rules: dict[str, bool] = Field(default_factory=dict)
 
 
 class AssignmentOut(BaseModel):

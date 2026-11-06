@@ -16,7 +16,7 @@ function teachingEntry(t){
     end: Number(t && (t.end ?? t.DenTiet)) || 2,
     source: (t && (t.source ?? t.NguonFile)) ?? null,
     note: (t && (t.note ?? t.GhiChu)) ?? null,
-    room: String((t && (t.room ?? t.Phong ?? t.PhongHoc ?? t.DiaDiem)) ?? ''),
+    room: String((t && (t.room ?? t.phong ?? t.Phong ?? t.PhongHoc ?? t.DiaDiem)) ?? ''),
     courseType: String((t && (t.courseType ?? t.LoaiPhong ?? t.LoaiHocPhan ?? t.HinhThuc)) ?? ''),
     course: String((t && (t.course ?? t.MonHoc ?? t.TenMon ?? t.Mon)) ?? '')
   };

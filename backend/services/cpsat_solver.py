@@ -9,12 +9,18 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date as date_type
 from datetime import datetime
+from itertools import combinations
 import logging
+import math
 import os
 import re
-import unicodedata
 from time import monotonic
 from typing import Any
+
+try:
+    from ..rb7 import is_main_campus_room, normalize_min_travel_slots, rb7_teaching_exam_violation
+except ImportError:
+    from rb7 import is_main_campus_room, normalize_min_travel_slots, rb7_teaching_exam_violation
 
 try:
     from ortools.sat.python import cp_model
@@ -26,7 +32,16 @@ _RANGE_RE = re.compile(r"(\d+)\s*[→>-]\s*(\d+)")
 TOTAL_TIME_SECONDS = 120.0
 PHASE1_TIME_SECONDS = 30.0
 MAX_SOLVER_WORKERS = 8
-SOFT_RULE_WEIGHTS = {"S1": 1000, "S2": 800, "S3": 600, "S4": 400, "S5": 250, "S6": 100}
+SOFT_RULE_WEIGHTS = {
+    "RB8": 10_000_000,
+    "S1": 1_000_000,
+    "S3": 500_000,
+    "S2": 200_000,
+    "S4": 10_000,
+    "S5": 1_000,
+    "S6": 100,
+    "S7": 10,
+}
 LOGGER = logging.getLogger(__name__)
 
 
@@ -103,7 +118,7 @@ def _calendar_entry(raw: Any, *, default_priority: int = 3) -> dict[str, Any] | 
         priority = int(priority_match.group()) if priority_match else default_priority
         return {
             "date": _date_key(date_value), "start": start, "end": end,
-            "room": _field(record, "room", "Phong", "DiaDiem", "dia_diem", "location", "campus"),
+            "room": _field(record, "room", "Phong"),
             "priority": priority,
         }
 
@@ -185,40 +200,6 @@ def _session_group(exam: dict[str, Any]) -> int:
     return 1 if start <= 6 else (2 if start <= 12 else 3)
 
 
-def _same_campus(left: Any, right: Any) -> bool:
-    """Compare locations, preferring street-address identity over room labels."""
-    def normalize(value: Any) -> str:
-        value = unicodedata.normalize("NFKD", str(value or "").casefold())
-        value = "".join(ch for ch in value if not unicodedata.combining(ch))
-        return re.sub(r"[^a-z0-9]+", " ", value).strip()
-
-    a, b = normalize(left), normalize(right)
-    if not a or not b:
-        return True  # Unknown location alone must not fabricate a campus conflict.
-    # Common HU IT campus addresses and general numbered street addresses.
-    def address(value: str) -> str | None:
-        for marker in ("tan ky tan quy", "le trong tan"):
-            if marker in value:
-                number = re.search(rf"\b(\d{{1,4}})\s+{marker}\b", value)
-                return f"{number.group(1) if number else ''} {marker}".strip()
-        match = re.search(r"\b(\d{1,4})\s+([a-z]+(?:\s+[a-z]+){1,5})", value)
-        return " ".join(match.groups()) if match else None
-
-    address_a, address_b = address(a), address(b)
-    if address_a or address_b:
-        return bool(address_a and address_b and address_a == address_b)
-    # Ignore room-level identifiers so A101 and B306 at the same named site
-    # are not mistaken for campuses; retain the named building/site itself.
-    def site(value: str) -> str:
-        value = re.sub(r"\b(?:phong|room|p)\s*[a-z]?\s*\d{2,4}\b", " ", value)
-        value = re.sub(r"\b[a-z]\s*\d{2,4}\b", " ", value)
-        value = re.sub(r"\b\d{2,4}\b", " ", value)
-        value = re.sub(r"\b(?:phong hoc|phong may tinh|classroom)\b", " ", value)
-        return " ".join(value.split())
-    site_a, site_b = site(a), site(b)
-    return site_a == site_b if site_a and site_b else a == b
-
-
 def _teaching_conflict(lecturer: dict[str, Any], exam: dict[str, Any]) -> bool:
     day = _date_key(exam.get("date", exam.get("NgayThi")))
     start, end = _range_for(exam)
@@ -230,21 +211,73 @@ def _teaching_conflict(lecturer: dict[str, Any], exam: dict[str, Any]) -> bool:
 
 def _fixed_events(lecturer: dict[str, Any]) -> list[dict[str, Any]]:
     """Teaching and exam-paper duty are both fixed hard-conflict events."""
-    return (_calendar_entries(lecturer.get("teach"))
-            + _calendar_entries(lecturer.get("duty"), default_priority=1))
+    teaching = [dict(event, source="teach") for event in _calendar_entries(lecturer.get("teach"))]
+    duty = [dict(event, source="duty")
+            for event in _calendar_entries(lecturer.get("duty"), default_priority=1)]
+    return teaching + duty
 
 
-def _different_campus_travel_conflict(exam: dict[str, Any], event: dict[str, Any]) -> bool:
-    if not exam.get("room") or not event.get("room") or _same_campus(exam.get("room"), event.get("room")):
-        return False
-    exam_start, exam_end = _range_for(exam)
-    if exam_end < event["start"]:
-        idle = event["start"] - exam_end - 1
-    elif event["end"] < exam_start:
-        idle = exam_start - event["end"] - 1
-    else:
-        return True
-    return idle < 1
+def _merge_fixed_event_intervals(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge overlapping or adjacent fixed events before finding exam gaps."""
+    merged: list[dict[str, Any]] = []
+    ordered = sorted(events, key=lambda event: (event["date"], event["start"], event["end"]))
+    for event in ordered:
+        current = {"date": event["date"], "start": event["start"], "end": event["end"]}
+        if (merged and merged[-1]["date"] == current["date"]
+                and current["start"] <= merged[-1]["end"] + 1):
+            merged[-1]["end"] = max(merged[-1]["end"], current["end"])
+        else:
+            merged.append(current)
+    return merged
+
+
+def _rb9_fixed_events(lecturer: dict[str, Any]) -> list[dict[str, Any]]:
+    """RB9 baseline events; duty_rb9 carries all rounds, matching the SQL view."""
+    teaching = [dict(event, source="teach") for event in _calendar_entries(lecturer.get("teach"))]
+    duty_values = lecturer.get("duty_rb9", lecturer.get("duty"))
+    duty = [dict(event, source="duty")
+            for event in _calendar_entries(duty_values, default_priority=1)]
+    return teaching + duty
+
+
+def _rb9_exam_type(exam: dict[str, Any]) -> str:
+    """Match the database's TN rule: two-period exams or theory/multiple choice."""
+    start, end = _range_for(exam)
+    kind = str(_field(exam, "HinhThucThi", "kind", "LoaiCa", "loai_ca") or "").strip().casefold()
+    if end - start + 1 == 2 or kind in {
+        "tn", "lt", "trắc nghiệm", "trac nghiem", "lý thuyết", "ly thuyet",
+        "multiple choice", "theory",
+    }:
+        return "TN"
+    return "TL"
+
+
+def _rb9_daily_limits(base_events: list[dict[str, Any]]) -> tuple[int, int]:
+    """Return SQL-compatible max TN/TL shifts for a day's fixed baseline."""
+    base_periods = sum(max(0, int(event["end"]) - int(event["start"]) + 1)
+                       for event in base_events)
+    base_blocks = len(base_events)
+    if 5 <= base_periods <= 6:
+        return 3, 2
+    if base_blocks == 1:
+        return 4, 3
+    if base_blocks == 2:
+        return 2, 2
+    if base_blocks >= 3:
+        return 1, 1
+    return 2_147_483_647, 2_147_483_647
+
+
+def _rb9_events_connected(events: list[dict[str, Any]]) -> bool:
+    """Whether SQL's ordered event grouping puts these three events in one run."""
+    ordered = sorted(events, key=lambda event: (int(event["start"]), int(event["end"])))
+    reach = int(ordered[0]["end"])
+    for event in ordered[1:]:
+        start, end = int(event["start"]), int(event["end"])
+        if start > reach + 1:
+            return False
+        reach = max(reach, end)
+    return True
 
 
 def _quotas(lecturers: list[dict[str, Any]], exams: list[dict[str, Any]]) -> dict[str, int]:
@@ -285,11 +318,20 @@ def _week_key(value: Any) -> str | None:
         return None
 
 
-def solve_schedule(payload: dict[str, Any]) -> dict[str, Any]:
+def solve_schedule(payload: dict[str, Any], progress_callback=None) -> dict[str, Any]:
     if cp_model is None:
         raise RuntimeError("Chưa cài Google OR-Tools. Hãy chạy: python -m pip install -r requirements.txt")
 
     started = monotonic()
+    try:
+        configured_time_limit = float(payload.get("time_limit_seconds", TOTAL_TIME_SECONDS))
+    except (TypeError, ValueError):
+        configured_time_limit = TOTAL_TIME_SECONDS
+    if not math.isfinite(configured_time_limit):
+        configured_time_limit = TOTAL_TIME_SECONDS
+    total_time_seconds = min(300.0, max(1.0, configured_time_limit))
+    feasibility_only = bool(payload.get("feasibility_only", False))
+    min_travel_slots = normalize_min_travel_slots(payload.get("min_travel_slots"))
     lecturers = list(payload.get("lecturers") or [])
     exams = [dict(exam) for exam in (payload.get("exams") or [])]
     def is_locked(assignment: Any) -> bool:
@@ -356,7 +398,14 @@ def solve_schedule(payload: dict[str, Any]) -> dict[str, Any]:
             reason = None
             if any(event["date"] == day and start <= event["end"] and event["start"] <= end for event in fixed):
                 reason = "trùng lịch dạy/trực đề"
-            elif any(event["date"] == day and _different_campus_travel_conflict(exam, event) for event in fixed):
+            elif any(
+                event["source"] == "teach"
+                and event["date"] == day
+                and rb7_teaching_exam_violation(
+                    event.get("room"), event["start"], event["end"], start, end, min_travel_slots
+                )
+                for event in fixed
+            ):
                 reason = "không đủ tiết di chuyển khác cơ sở"
             elif any(item.get("priority", 3) == 1 for item in _busy_conflicts(lec, exam)):
                 reason = "bận mức 1"
@@ -435,7 +484,7 @@ def solve_schedule(payload: dict[str, Any]) -> dict[str, Any]:
         )
 
     # Hard 3/4/6/7: exam clashes, teaching, paper duty, level-1 busy time,
-    # and one free lesson for travel between different campus locations.
+    # and travel from off-campus teaching to a main-campus exam.
     for lec in lecturers:
         lid = str(lec.get("id"))
         fixed = _fixed_events(lec)
@@ -448,7 +497,11 @@ def solve_schedule(payload: dict[str, Any]) -> dict[str, Any]:
                 for event in fixed
             )
             travel_blocked = any(
-                event["date"] == day and _different_campus_travel_conflict(exam, event)
+                event["source"] == "teach"
+                and event["date"] == day
+                and rb7_teaching_exam_violation(
+                    event.get("room"), event["start"], event["end"], start, end, min_travel_slots
+                )
                 for event in fixed
             )
             busy_one = any(item.get("priority", 3) == 1 for item in _busy_conflicts(lec, exam))
@@ -484,63 +537,87 @@ def solve_schedule(payload: dict[str, Any]) -> dict[str, Any]:
                         f"Giảng viên {lid}: có các ca thi giao thời gian trong cùng ngày",
                         model.Add(x[(str(first.get("id")), lid)] + x[(str(second.get("id")), lid)] <= 1),
                     )
-                elif first_end < second_start and not _same_campus(first.get("room"), second.get("room")):
-                    if second_start - first_end - 1 < 1:
-                        guarded(
-                            ("time", lid, str(first.get("id")), str(second.get("id"))),
-                            f"Giảng viên {lid}: thiếu tiết di chuyển giữa ca {first.get('id')} và {second.get('id')}",
-                            model.Add(x[(str(first.get("id")), lid)] + x[(str(second.get("id")), lid)] <= 1),
-                        )
-                elif second_end < first_start and not _same_campus(first.get("room"), second.get("room")):
-                    if first_start - second_end - 1 < 1:
-                        guarded(
-                            ("time", lid, str(second.get("id")), str(first.get("id"))),
-                            f"Giảng viên {lid}: thiếu tiết di chuyển giữa ca {second.get('id')} và {first.get('id')}",
-                            model.Add(x[(str(first.get("id")), lid)] + x[(str(second.get("id")), lid)] <= 1),
-                        )
 
-    # Hard night workload cap: teaching and paper-duty periods count 1:1.
-    # Hard 8: teaching, paper-duty, and exam periods share a 12-period daily cap
-    # whenever this lecturer is assigned an exam beginning at period 13 or later.
-    MAX_TIET_TRONG_NGAY_TRUOC_CA_TOI = 12
+    # Hard 9: mirror the SQL daily exam-count limits and continuous-event rule.
+    # The legacy SQL RB9 counts all teaching/duty blocks as baseline, groups exam
+    # counts by round and day, and counts continuous events across the whole day.
     for lec in lecturers:
         lid = str(lec.get("id"))
-        fixed = _fixed_events(lec)
+        base_by_day: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for event in _rb9_fixed_events(lec):
+            base_by_day[event["date"]].append(event)
+
+        exams_by_dot_day: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
         exams_by_day: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for exam in exams:
             day = _date_key(exam.get("date", exam.get("NgayThi")))
+            dot = str(_field(exam, "ma_dot", "MaDot") or "")
+            exams_by_dot_day[(dot, day)].append(exam)
             exams_by_day[day].append(exam)
 
-        for day, day_exams in exams_by_day.items():
-            fixed_load = sum(
-                max(1, int(event["end"]) - int(event["start"]) + 1)
-                for event in fixed if event["date"] == day
+        for (dot, day), day_exams in exams_by_dot_day.items():
+            max_tn, max_tl = _rb9_daily_limits(base_by_day.get(day, []))
+            for exam_type, limit in (("TN", max_tn), ("TL", max_tl)):
+                variables = [
+                    x[(str(exam.get("id")), lid)]
+                    for exam in day_exams
+                    if (str(exam.get("id")), lid) in x and _rb9_exam_type(exam) == exam_type
+                ]
+                if variables and limit < len(variables):
+                    guarded(
+                        ("rb9_daily_count", lid, dot, day, exam_type),
+                        f"[RB9] Giảng viên {lid}: vượt giới hạn {exam_type} trong ngày {day}",
+                        model.Add(sum(variables) <= limit),
+                    )
+
+        events_by_day: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for day, events in base_by_day.items():
+            events_by_day[day].extend(
+                {"start": event["start"], "end": event["end"], "var": None}
+                for event in events
             )
-            exam_load = []
+        for event in _calendar_entries(lec.get("rb9_other_exams")):
+            events_by_day[event["date"]].append({
+                "start": event["start"], "end": event["end"], "var": None,
+            })
+        for day, day_exams in exams_by_day.items():
             for exam in day_exams:
                 eid = str(exam.get("id"))
-                key = (eid, lid)
-                if key not in x:
+                decision = x.get((eid, lid))
+                if decision is None:
                     continue
                 start, end = _range_for(exam)
-                exam_load.append(max(1, end - start + 1) * x[key])
+                events_by_day[day].append({
+                    "start": start, "end": end, "var": decision,
+                    "night": start >= 13, "exam_id": eid,
+                })
 
-            for exam in day_exams:
-                eid = str(exam.get("id"))
-                start, _ = _range_for(exam)
-                night_var = x.get((eid, lid))
-                if start < 13 or night_var is None:
+        for day, day_events in events_by_day.items():
+            night_vars = [event["var"] for event in day_events if event.get("night")]
+            if not night_vars:
+                continue
+            has_night_exam = model.NewBoolVar(f"rb9_has_night_exam_{lid}_{day}")
+            model.AddMaxEquality(has_night_exam, night_vars)
+            for triple in combinations(day_events, 3):
+                if not _rb9_events_connected(list(triple)):
                     continue
-                load_constraint = model.Add(
-                    fixed_load + sum(exam_load) <= MAX_TIET_TRONG_NGAY_TRUOC_CA_TOI
+                variables = [event["var"] for event in triple if event["var"] is not None]
+                # SQL RB9 enables the continuity limit if any current-round
+                # night exam is assigned that day. The three-event run itself
+                # may be earlier in the day and need not contain the night exam.
+                # If a night exam is active, at least one variable event in each
+                # connected triple must therefore remain unassigned.
+                continuity_constraint = model.Add(
+                    sum(variables) + has_night_exam <= len(variables)
                 )
-                load_constraint.OnlyEnforceIf(night_var)
                 guarded(
-                    ("night_daily_load", lid, day, eid),
-                    f"[H8] Giảng viên {lid}: tổng tải ngày vượt "
-                    f"{MAX_TIET_TRONG_NGAY_TRUOC_CA_TOI} tiết khi nhận ca tối {eid}",
-                    load_constraint,
+                    ("rb9_continuity", lid, day),
+                    f"[RB9] Giảng viên {lid}: khi có ca tối, không để chuỗi 3 lịch liên tục trong ngày {day}",
+                    continuity_constraint,
                 )
+
+    # Night-load tolerance is modeled as RB8's optional soft objective below.
+    MAX_TIET_TRONG_NGAY_TRUOC_CA_TOI = 12
 
     # Hard 5: only one exam group per lecturer per day/session.
     for lec in lecturers:
@@ -654,6 +731,13 @@ def solve_schedule(payload: dict[str, Any]) -> dict[str, Any]:
             return True
         return cfg.get("on", cfg.get("enabled", True)) is not False
 
+    def penalty_weight(rule_id: str) -> int:
+        configured = payload.get("soft_weights", {})
+        try:
+            return max(0, int(configured.get(rule_id, SOFT_RULE_WEIGHTS[rule_id])))
+        except (AttributeError, TypeError, ValueError):
+            return SOFT_RULE_WEIGHTS[rule_id]
+
     def create_solver(seconds: float) -> Any:
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = max(0.1, float(seconds))
@@ -664,6 +748,40 @@ def solve_schedule(payload: dict[str, Any]) -> dict[str, Any]:
             solver.parameters.num_search_workers = worker_count
         solver.parameters.log_search_progress = bool(payload.get("log_search_progress", False))
         return solver
+
+    reported_solutions = [0]
+
+    def report_progress(phase: str, phase_label: str, **details: Any) -> None:
+        if not callable(progress_callback):
+            return
+        update = {
+            "phase": phase,
+            "phase_label": phase_label,
+            "solutions_found": reported_solutions[0],
+        }
+        update.update(details)
+        try:
+            progress_callback(update)
+        except Exception:
+            LOGGER.exception("Could not publish CP-SAT progress update")
+
+    def solution_callback_for(phase: str, phase_label: str):
+        class ProgressCallback(cp_model.CpSolverSolutionCallback):
+            def on_solution_callback(self) -> None:
+                reported_solutions[0] += 1
+                details: dict[str, Any] = {}
+                if phase == "optimizing_soft":
+                    try:
+                        details["best_objective"] = float(self.ObjectiveValue()) / objective_scale
+                    except (AttributeError, RuntimeError, ValueError):
+                        pass
+                    try:
+                        details["best_bound"] = float(self.BestObjectiveBound()) / objective_scale
+                    except (AttributeError, RuntimeError, ValueError):
+                        pass
+                report_progress(phase, phase_label, **details)
+
+        return ProgressCallback()
 
     def values_from_solver(solver: Any) -> dict[tuple[str, str], int]:
         return {key: int(solver.Value(var)) for key, var in x.items()}
@@ -700,15 +818,87 @@ def solve_schedule(payload: dict[str, Any]) -> dict[str, Any]:
     # solve_schedule scope so the diagnostics can use them after P2 completes.
     lecturers_with_quota = [lec for lec in lecturers if quota.get(str(lec.get("id")), 0) > 0]
     total_quota = sum(quota.values())
+    # Keep the displayed objective in points while comparing proportional quota
+    # deviations exactly as integer CP-SAT terms: raw model objective = points * scale.
+    objective_scale = max(1, total_quota)
 
     def add_soft_objective() -> list[Any]:
         """Add P2-only auxiliaries and objective terms to the already-built model."""
         terms: list[Any] = []
         deviation_bound = max(1, total_needed * max(1, total_quota))
 
-        # S1: proportional balance across sessions; night is weighted most
-        # strongly while all three session groups share the configured priority.
+        # RB8: penalize once per lecturer-day if a night assignment makes the
+        # total teaching, paper-duty and exam load exceed 12 periods.
+        if rule_enabled("RB8"):
+            by_day: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for exam in exams:
+                by_day[_date_key(exam.get("date", exam.get("NgayThi")))].append(exam)
+            for lec in lecturers:
+                lid = str(lec.get("id"))
+                fixed_by_day: dict[str, int] = defaultdict(int)
+                for event in _rb9_fixed_events(lec):
+                    fixed_by_day[event["date"]] += max(1, int(event["end"]) - int(event["start"]) + 1)
+                for day, day_exams in by_day.items():
+                    night_vars = []
+                    day_load_terms = []
+                    for exam in day_exams:
+                        eid = str(exam.get("id"))
+                        decision = x.get((eid, lid))
+                        if decision is None:
+                            continue
+                        start, end = _range_for(exam)
+                        day_load_terms.append(max(1, end - start + 1) * decision)
+                        if start >= 13:
+                            night_vars.append(decision)
+                    if not night_vars:
+                        continue
+                    has_night = model.NewBoolVar(f"rb8_has_night_{lid}_{day}")
+                    model.AddMaxEquality(has_night, night_vars)
+                    fixed_load = fixed_by_day.get(day, 0)
+                    total_load = fixed_load + sum(day_load_terms)
+                    over_limit = model.NewBoolVar(f"rb8_over_limit_{lid}_{day}")
+                    model.Add(total_load >= MAX_TIET_TRONG_NGAY_TRUOC_CA_TOI + 1).OnlyEnforceIf(over_limit)
+                    model.Add(total_load <= MAX_TIET_TRONG_NGAY_TRUOC_CA_TOI).OnlyEnforceIf(over_limit.Not())
+                    violation = model.NewBoolVar(f"rb8_violation_{lid}_{day}")
+                    model.AddBoolAnd([has_night, over_limit]).OnlyEnforceIf(violation)
+                    model.AddBoolOr([has_night.Not(), over_limit.Not()]).OnlyEnforceIf(violation.Not())
+                    terms.append(penalty_weight("RB8") * objective_scale * violation)
+
+        # S1: minimize lecturer-days and add the same surcharge for a one-event day.
+        # Teaching and duty are fixed events, so assigning onto those days can avoid a new trip.
+        # A one-event day adds one more S1 penalty unit.
         if rule_enabled("S1"):
+            by_day: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for exam in exams:
+                by_day[_date_key(exam.get("date", exam.get("NgayThi")))].append(exam)
+            for lec in lecturers_with_quota:
+                lid = str(lec.get("id"))
+                fixed_by_day: dict[str, int] = defaultdict(int)
+                for event in _rb9_fixed_events(lec):
+                    fixed_by_day[event["date"]] += 1
+                for day in set(by_day) | set(fixed_by_day):
+                    day_exams = by_day.get(day, [])
+                    day_vars = [x[(str(exam.get("id")), lid)] for exam in day_exams
+                                if (str(exam.get("id")), lid) in x]
+                    fixed_count = fixed_by_day.get(day, 0)
+                    if not day_vars and not fixed_count:
+                        continue
+                    count = fixed_count + sum(day_vars)
+                    used_day = model.NewBoolVar(f"s1_day_used_{lid}_{day}")
+                    singleton = model.NewBoolVar(f"s1_singleton_{lid}_{day}")
+                    model.Add(count >= 1).OnlyEnforceIf(used_day)
+                    model.Add(count == 0).OnlyEnforceIf(used_day.Not())
+                    if fixed_count:
+                        model.Add(singleton == 0)
+                    else:
+                        exam_count = sum(day_vars)
+                        model.Add(exam_count == 1).OnlyEnforceIf(singleton)
+                        model.Add(exam_count != 1).OnlyEnforceIf(singleton.Not())
+                    terms.append(penalty_weight("S1") * objective_scale * used_day)
+                    terms.append(penalty_weight("S1") * objective_scale * singleton)
+
+        # S2: proportional balance in assignment units; night is weighted twice.
+        if rule_enabled("S2"):
             for session in (1, 2, 3):
                 group_exams = [exam for exam in exams if _session_group(exam) == session]
                 group_total = sum(
@@ -720,11 +910,11 @@ def solve_schedule(payload: dict[str, Any]) -> dict[str, Any]:
                     lid = str(lec.get("id"))
                     count = sum(x.get((str(exam.get("id")), lid), 0) for exam in group_exams)
                     expression = count * total_quota - group_total * quota[lid]
-                    terms.append(SOFT_RULE_WEIGHTS["S1"] * session_scale * _abs_deviation(
-                        model, expression, deviation_bound, f"s1_session_{session}_{lid}"))
+                    terms.append(penalty_weight("S2") * session_scale * _abs_deviation(
+                        model, expression, deviation_bound, f"s2_session_{session}_{lid}"))
 
-        # S4: balance exam formats across the round in proportion to quota.
-        if rule_enabled("S4"):
+        # S5: proportional balance by exam format, measured in assignment units.
+        if rule_enabled("S5"):
             for group in {_type_group(exam) for exam in exams}:
                 group_exams = [exam for exam in exams if _type_group(exam) == group]
                 group_total = sum(
@@ -735,13 +925,13 @@ def solve_schedule(payload: dict[str, Any]) -> dict[str, Any]:
                     lid = str(lec.get("id"))
                     count = sum(x.get((str(exam.get("id")), lid), 0) for exam in group_exams)
                     expression = count * total_quota - group_total * quota[lid]
-                    terms.append(SOFT_RULE_WEIGHTS["S4"] * _abs_deviation(
-                        model, expression, deviation_bound, f"s4_format_{group}_{lid}"))
+                    terms.append(penalty_weight("S5") * _abs_deviation(
+                        model, expression, deviation_bound, f"s5_format_{group}_{lid}"))
 
-        # S5/S6: soft busy periods. Hard level-1 busy was removed at variable build.
+        # S6/S7: soft busy periods. Hard level-1 busy was removed at variable build.
         busy_weights = {
-            2: SOFT_RULE_WEIGHTS["S5"] if rule_enabled("S5") else 0,
-            3: SOFT_RULE_WEIGHTS["S6"] if rule_enabled("S6") else 0,
+            2: penalty_weight("S6") * objective_scale if rule_enabled("S6") else 0,
+            3: penalty_weight("S7") * objective_scale if rule_enabled("S7") else 0,
         }
         if any(busy_weights.values()):
             for exam in exams:
@@ -757,48 +947,60 @@ def solve_schedule(payload: dict[str, Any]) -> dict[str, Any]:
                         if weight:
                             terms.append(weight * decision)
 
-        # S2: penalize 1-2-slot gaps around fixed events or between chosen exams.
-        if rule_enabled("S2"):
+        # S3: penalize each idle period in 1-2-slot gaps around fixed events or exams.
+        if rule_enabled("S3"):
             for lec in lecturers:
                 lid = str(lec.get("id"))
-                fixed = _fixed_events(lec)
+                fixed = _merge_fixed_event_intervals(_rb9_fixed_events(lec))
                 for event_index, event in enumerate(fixed):
                     for exam in exams:
                         eid = str(exam.get("id"))
                         exam_var = x.get((eid, lid))
                         if exam_var is None or event["date"] != _date_key(exam.get("date", exam.get("NgayThi"))):
                             continue
-                        if not _same_campus(event.get("room"), exam.get("room")):
-                            continue
                         start, end = _range_for(exam)
                         if event["end"] < start:
                             idle = start - event["end"] - 1
+                            fixed_between = any(
+                                index != event_index and other["date"] == event["date"]
+                                and event["end"] < other["start"]
+                                and other["end"] < start
+                                for index, other in enumerate(fixed)
+                            )
                             between = [x[(str(other.get("id")), lid)] for other in exams
                                        if (str(other.get("id")), lid) in x
+                                       and _date_key(other.get("date", other.get("NgayThi"))) == event["date"]
                                        and event["end"] < _range_for(other)[0] < start
                                        and str(other.get("id")) != eid]
                         elif end < event["start"]:
                             idle = event["start"] - end - 1
+                            fixed_between = any(
+                                index != event_index and other["date"] == event["date"]
+                                and end < other["start"]
+                                and other["end"] < event["start"]
+                                for index, other in enumerate(fixed)
+                            )
                             between = [x[(str(other.get("id")), lid)] for other in exams
                                        if (str(other.get("id")), lid) in x
+                                       and _date_key(other.get("date", other.get("NgayThi"))) == event["date"]
                                        and end < _range_for(other)[0] < event["start"]
                                        and str(other.get("id")) != eid]
                         else:
                             continue
-                        if 1 <= idle <= 2:
-                            gap = model.NewBoolVar(f"s2_fixed_gap_{lid}_{event_index}_{eid}")
+                        if 1 <= idle <= 2 and not fixed_between:
+                            gap = model.NewBoolVar(f"s3_fixed_gap_{lid}_{event_index}_{eid}")
                             model.Add(gap <= exam_var)
                             for middle_var in between:
                                 model.Add(gap + middle_var <= 1)
                             model.Add(gap >= exam_var - sum(between))
-                            terms.append(SOFT_RULE_WEIGHTS["S2"] * idle * gap)
+                            terms.append(penalty_weight("S3") * objective_scale * idle * gap)
 
             by_day: dict[str, list[dict[str, Any]]] = defaultdict(list)
             for exam in exams:
                 by_day[_date_key(exam.get("date", exam.get("NgayThi")))].append(exam)
             for lec in lecturers:
                 lid = str(lec.get("id"))
-                for day_exams in by_day.values():
+                for day, day_exams in by_day.items():
                     ordered = sorted(day_exams, key=lambda item: (
                         _range_for(item)[0], _range_for(item)[1], str(item.get("id"))))
                     for i, previous in enumerate(ordered):
@@ -816,70 +1018,58 @@ def solve_schedule(payload: dict[str, Any]) -> dict[str, Any]:
                             idle = current_start - previous_end - 1
                             if not 1 <= idle <= 2:
                                 continue
+                            if any(event["date"] == day
+                                   and previous_end < event["start"]
+                                   and event["end"] < current_start
+                                   for event in fixed):
+                                continue
                             between = [x[(str(middle.get("id")), lid)] for middle in ordered
                                        if (str(middle.get("id")), lid) in x
                                        and previous_start < _range_for(middle)[0] < current_start
                                        and str(middle.get("id")) not in {previous_id, current_id}]
-                            gap = model.NewBoolVar(f"s2_exam_gap_{lid}_{previous_id}_{current_id}")
+                            gap = model.NewBoolVar(f"s3_exam_gap_{lid}_{previous_id}_{current_id}")
                             model.Add(gap <= previous_var)
                             model.Add(gap <= current_var)
                             for middle_var in between:
                                 model.Add(gap + middle_var <= 1)
                             model.Add(gap >= previous_var + current_var - 1 - sum(between))
-                            terms.append(SOFT_RULE_WEIGHTS["S2"] * idle * gap)
+                            terms.append(penalty_weight("S3") * objective_scale * idle * gap)
 
-        # S3: reward adjacent same-form assignments and concentrate duties in fewer weeks.
-        if rule_enabled("S3"):
-            by_day: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        # S4: concentrate a lecturer's assignments into fewer calendar weeks.
+        if rule_enabled("S4"):
             by_week: dict[str, list[dict[str, Any]]] = defaultdict(list)
             for exam in exams:
-                by_day[_date_key(exam.get("date", exam.get("NgayThi")))].append(exam)
                 week = _week_key(exam.get("date", exam.get("NgayThi")))
                 if week:
                     by_week[week].append(exam)
             for lec in lecturers_with_quota:
                 lid = str(lec.get("id"))
-                for day_exams in by_day.values():
-                    ordered = sorted(day_exams, key=lambda item: (
-                        _range_for(item)[0], _range_for(item)[1], str(item.get("id"))))
-                    for i, previous in enumerate(ordered):
-                        previous_id = str(previous.get("id"))
-                        previous_start, previous_end = _range_for(previous)
-                        previous_var = x.get((previous_id, lid))
-                        if previous_var is None:
-                            continue
-                        for current in ordered[i + 1:]:
-                            current_id = str(current.get("id"))
-                            current_start, _ = _range_for(current)
-                            current_var = x.get((current_id, lid))
-                            if current_var is None:
-                                continue
-                            if (current_start == previous_end + 1
-                                    and _session_group(previous) == _session_group(current)
-                                    and _type_group(previous) == _type_group(current)):
-                                adjacent = model.NewBoolVar(f"s3_cluster_{lid}_{previous_id}_{current_id}")
-                                model.Add(adjacent <= previous_var)
-                                model.Add(adjacent <= current_var)
-                                model.Add(adjacent >= previous_var + current_var - 1)
-                                terms.append(-SOFT_RULE_WEIGHTS["S3"] * adjacent)
                 for week, week_exams in by_week.items():
                     week_vars = [x[(str(exam.get("id")), lid)] for exam in week_exams
                                  if (str(exam.get("id")), lid) in x]
                     if not week_vars:
                         continue
-                    used = model.NewBoolVar(f"s3_week_used_{lid}_{week}")
+                    used = model.NewBoolVar(f"s4_week_used_{lid}_{week}")
                     for var in week_vars:
                         model.Add(used >= var)
                     model.Add(used <= sum(week_vars))
-                    terms.append(SOFT_RULE_WEIGHTS["S3"] * used)
+                    terms.append(penalty_weight("S4") * objective_scale * used)
 
         model.Minimize(sum(terms) if terms else 0)
         return terms
 
     # Phase 1: satisfaction only. No auxiliary objective variables are added here.
-    phase1_solver = create_solver(min(PHASE1_TIME_SECONDS, TOTAL_TIME_SECONDS))
+    report_progress("finding_feasible", "Đang tìm lịch thỏa các ràng buộc cứng")
+    if feasibility_only:
+        phase1_budget = total_time_seconds
+    else:
+        # Reserve an optimization window even for the 30-second quick mode.
+        # For standard/deep runs this remains 30s/60s, respectively.
+        phase1_budget = min(total_time_seconds, max(15.0, min(60.0, total_time_seconds * 0.25)))
+    phase1_solver = create_solver(phase1_budget)
     phase1_started = monotonic()
-    phase1_code = phase1_solver.Solve(model)
+    phase1_callback = solution_callback_for("finding_feasible", "Đang tìm lịch thỏa các ràng buộc cứng")
+    phase1_code = phase1_solver.Solve(model, phase1_callback)
     phase1_elapsed = float(phase1_solver.WallTime() or (monotonic() - phase1_started))
     phase1_status = phase1_solver.StatusName(phase1_code)
     LOGGER.info("CP-SAT P1 built vars=%d constraints=%d; status=%s wall=%.3fs",
@@ -921,41 +1111,46 @@ def solve_schedule(payload: dict[str, Any]) -> dict[str, Any]:
     # Capture the valid incumbent before introducing any P2-only variables/objective.
     phase1_solution = values_from_solver(phase1_solver)
     p2_started = monotonic()
-    p2_budget = max(10.0, TOTAL_TIME_SECONDS - phase1_elapsed)
-    phase2_status = "ERROR"
+    p2_budget = max(0.1, total_time_seconds - phase1_elapsed)
+    phase2_status = "SKIPPED_QUICK" if feasibility_only else "ERROR"
     phase2_elapsed = 0.0
     phase2_solution = phase1_solution
     phase2_objective: float | None = None
     hint_applied = False
     phase2_improved = False
     p2_solver = None
-    try:
+    if feasibility_only:
+        report_progress("completed", "Đã tìm được lịch thỏa ràng buộc cứng; bỏ qua tối ưu mềm")
+    else:
         try:
-            model.ClearHints()
-        except AttributeError:
-            hint = getattr(model.Proto(), "solution_hint", None)
-            if hint is not None and hasattr(hint, "Clear"):
-                hint.Clear()
-        for key, var in x.items():
-            model.AddHint(var, phase1_solution[key])
-        hint_applied = True
-        add_soft_objective()
-        p2_solver = create_solver(p2_budget)
-        p2_code = p2_solver.Solve(model)
-        phase2_elapsed = float(p2_solver.WallTime() or (monotonic() - p2_started))
-        phase2_status = p2_solver.StatusName(p2_code)
-        if p2_code in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            candidate = values_from_solver(p2_solver)
-            phase2_improved = candidate != phase1_solution
-            phase2_solution = candidate
-            phase2_objective = float(p2_solver.ObjectiveValue())
-        LOGGER.info("CP-SAT P2 status=%s wall=%.3fs objective=%s hint_submitted=%s improved=%s",
-                    phase2_status, phase2_elapsed, phase2_objective,
-                    hint_applied, phase2_improved)
-    except Exception:
-        phase2_elapsed = monotonic() - p2_started
-        LOGGER.exception("CP-SAT P2 failed; falling back to P1 solution")
-        phase2_status = "ERROR"
+            try:
+                model.ClearHints()
+            except AttributeError:
+                hint = getattr(model.Proto(), "solution_hint", None)
+                if hint is not None and hasattr(hint, "Clear"):
+                    hint.Clear()
+            for key, var in x.items():
+                model.AddHint(var, phase1_solution[key])
+            hint_applied = True
+            add_soft_objective()
+            report_progress("optimizing_soft", "Đang tối ưu thứ tự ưu tiên các ràng buộc mềm")
+            p2_solver = create_solver(p2_budget)
+            phase2_callback = solution_callback_for("optimizing_soft", "Đang tối ưu thứ tự ưu tiên các ràng buộc mềm")
+            p2_code = p2_solver.Solve(model, phase2_callback)
+            phase2_elapsed = float(p2_solver.WallTime() or (monotonic() - p2_started))
+            phase2_status = p2_solver.StatusName(p2_code)
+            if p2_code in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                candidate = values_from_solver(p2_solver)
+                phase2_improved = candidate != phase1_solution
+                phase2_solution = candidate
+                phase2_objective = float(p2_solver.ObjectiveValue()) / objective_scale
+            LOGGER.info("CP-SAT P2 status=%s wall=%.3fs objective=%s hint_submitted=%s improved=%s",
+                        phase2_status, phase2_elapsed, phase2_objective,
+                        hint_applied, phase2_improved)
+        except Exception:
+            phase2_elapsed = monotonic() - p2_started
+            LOGGER.exception("CP-SAT P2 failed; falling back to P1 solution")
+            phase2_status = "ERROR"
 
     use_phase2 = phase2_status in ("OPTIMAL", "FEASIBLE")
     selected_solution = phase2_solution if use_phase2 else phase1_solution
@@ -964,15 +1159,60 @@ def solve_schedule(payload: dict[str, Any]) -> dict[str, Any]:
 
     # Diagnostic counts are deliberately computed from the selected assignment map,
     # not from auxiliary solver variables, so fallback results remain reportable.
-    soft_violations: dict[str, int | None] = {key: None for key in SOFT_RULE_WEIGHTS}
-    if rule_enabled("S1") or rule_enabled("S4"):
+    soft_violations: dict[str, int | float | None] = {key: None for key in SOFT_RULE_WEIGHTS}
+    soft_details: dict[str, dict[str, int | float]] = {}
+    if rule_enabled("RB8"):
+        rb8_violation_days = 0
+        for lec in lecturers:
+            lid = str(lec.get("id"))
+            by_day: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for exam in exams:
+                if selected_solution.get((str(exam.get("id")), lid), 0):
+                    by_day[_date_key(exam.get("date", exam.get("NgayThi")))].append(exam)
+            fixed_by_day: dict[str, int] = defaultdict(int)
+            for event in _rb9_fixed_events(lec):
+                fixed_by_day[event["date"]] += max(1, int(event["end"]) - int(event["start"]) + 1)
+            for day, day_exams in by_day.items():
+                if any(_range_for(exam)[0] >= 13 for exam in day_exams):
+                    exam_load = sum(max(1, _range_for(exam)[1] - _range_for(exam)[0] + 1)
+                                    for exam in day_exams)
+                    if fixed_by_day.get(day, 0) + exam_load > MAX_TIET_TRONG_NGAY_TRUOC_CA_TOI:
+                        rb8_violation_days += 1
+        soft_violations["RB8"] = rb8_violation_days
+        soft_details["RB8"] = {"violating_lecturer_days": rb8_violation_days}
+    if rule_enabled("S1"):
+        lecturer_day_count = 0
+        singleton_day_count = 0
+        for lec in lecturers_with_quota:
+            lid = str(lec.get("id"))
+            by_day: dict[str, int] = defaultdict(int)
+            fixed_days = set()
+            for event in _rb9_fixed_events(lec):
+                by_day[event["date"]] += 1
+                fixed_days.add(event["date"])
+            exam_days: dict[str, int] = defaultdict(int)
+            for exam in exams:
+                if selected_solution.get((str(exam.get("id")), lid), 0):
+                    day = _date_key(exam.get("date", exam.get("NgayThi")))
+                    by_day[day] += 1
+                    exam_days[day] += 1
+            lecturer_day_count += len(by_day)
+            singleton_day_count += sum(count == 1 and day not in fixed_days
+                                       for day, count in exam_days.items())
+        # One diagnostic unit is one used day plus one extra unit for a singleton day.
+        soft_violations["S1"] = lecturer_day_count + singleton_day_count
+        soft_details["S1"] = {
+            "lecturer_days": lecturer_day_count,
+            "singleton_exam_days": singleton_day_count,
+        }
+    if rule_enabled("S2") or rule_enabled("S5"):
         for rule_id, groups, kind in (
-            ("S1", {_session_group(exam) for exam in exams}, "session"),
-            ("S4", {_type_group(exam) for exam in exams}, "format"),
+            ("S2", {_session_group(exam) for exam in exams}, "session"),
+            ("S5", {_type_group(exam) for exam in exams}, "format"),
         ):
             if not rule_enabled(rule_id):
                 continue
-            imbalanced = 0
+            imbalance_units = 0.0
             for group in groups:
                 group_exams = [exam for exam in exams if
                                (_session_group(exam) if kind == "session" else _type_group(exam)) == group]
@@ -981,11 +1221,14 @@ def solve_schedule(payload: dict[str, Any]) -> dict[str, Any]:
                 for lec in lecturers_with_quota:
                     lid = str(lec.get("id"))
                     count = sum(selected_solution.get((str(exam.get("id")), lid), 0) for exam in group_exams)
-                    if count * total_quota != group_total * quota[lid]:
-                        imbalanced += 1
-            soft_violations[rule_id] = imbalanced
-    if rule_enabled("S5") or rule_enabled("S6"):
-        for rule_id, priority in (("S5", 2), ("S6", 3)):
+                    deviation = abs(count * total_quota - group_total * quota[lid]) / objective_scale
+                    if kind == "session" and group == 3:
+                        deviation *= 2
+                    imbalance_units += deviation
+            soft_violations[rule_id] = imbalance_units
+            soft_details[rule_id] = {"weighted_deviation_units": imbalance_units}
+    if rule_enabled("S6") or rule_enabled("S7"):
+        for rule_id, priority in (("S6", 2), ("S7", 3)):
             if not rule_enabled(rule_id):
                 continue
             soft_violations[rule_id] = sum(
@@ -993,29 +1236,36 @@ def solve_schedule(payload: dict[str, Any]) -> dict[str, Any]:
                 for exam in exams for lec in lecturers
                 if any(entry["priority"] == priority for entry in _busy_conflicts(lec, exam))
             )
-    if rule_enabled("S2"):
-        gap_count = 0
+            soft_details[rule_id] = {"overlapping_assignments": soft_violations[rule_id] or 0}
+    if rule_enabled("S3"):
+        idle_period_units = 0
         for lec in lecturers:
             lid = str(lec.get("id"))
             assigned = [exam for exam in exams if selected_solution.get((str(exam.get("id")), lid), 0)]
+            by_day_assigned: dict[str, list[dict[str, Any]]] = defaultdict(list)
             for exam in assigned:
-                start, end = _range_for(exam)
-                if any(event["date"] == _date_key(exam.get("date", exam.get("NgayThi")))
-                       and _same_campus(event.get("room"), exam.get("room"))
-                       and (1 <= start - event["end"] - 1 <= 2
-                            or 1 <= event["start"] - end - 1 <= 2)
-                       for event in _fixed_events(lec)):
-                    gap_count += 1
-            assigned.sort(key=lambda item: (_date_key(item.get("date", item.get("NgayThi"))),
-                                             _range_for(item)[0]))
-            for previous, current in zip(assigned, assigned[1:]):
-                if _date_key(previous.get("date", previous.get("NgayThi"))) != _date_key(current.get("date", current.get("NgayThi"))):
-                    continue
-                idle = _range_for(current)[0] - _range_for(previous)[1] - 1
-                if 1 <= idle <= 2:
-                    gap_count += 1
-        soft_violations["S2"] = gap_count
-    if rule_enabled("S3"):
+                by_day_assigned[_date_key(exam.get("date", exam.get("NgayThi")))].append(exam)
+            fixed_by_day: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for event in _merge_fixed_event_intervals(_rb9_fixed_events(lec)):
+                fixed_by_day[event["date"]].append(event)
+            for day in set(by_day_assigned) | set(fixed_by_day):
+                events = [dict(event, is_exam=False) for event in fixed_by_day.get(day, [])]
+                events.extend(
+                    {"start": _range_for(exam)[0], "end": _range_for(exam)[1], "is_exam": True}
+                    for exam in by_day_assigned.get(day, [])
+                )
+                ordered = sorted(events, key=lambda event: (event["start"], event["end"]))
+                for previous, current in zip(ordered, ordered[1:]):
+                    if not previous["is_exam"] and not current["is_exam"]:
+                        continue
+                    if previous["end"] >= current["start"]:
+                        continue
+                    idle = current["start"] - previous["end"] - 1
+                    if 1 <= idle <= 2:
+                        idle_period_units += idle
+        soft_violations["S3"] = idle_period_units
+        soft_details["S3"] = {"idle_periods": idle_period_units}
+    if rule_enabled("S4"):
         active_week_count = 0
         for lec in lecturers_with_quota:
             lid = str(lec.get("id"))
@@ -1025,18 +1275,32 @@ def solve_schedule(payload: dict[str, Any]) -> dict[str, Any]:
                 and _week_key(exam.get("date", exam.get("NgayThi")))
             })
         # This is a compact clustering diagnostic (number of lecturer-weeks used).
-        soft_violations["S3"] = active_week_count
+        soft_violations["S4"] = active_week_count
+        soft_details["S4"] = {"lecturer_weeks": active_week_count}
 
-    # Keep the P1 incumbent if P2 found no different assignment. P1 is already
-    # guaranteed to satisfy every hard constraint.
-    phase2_usable = use_phase2 and phase2_improved
+    soft_penalties = {
+        rule_id: (
+            None if units is None
+            else round(float(units) * penalty_weight(rule_id), 6)
+        )
+        for rule_id, units in soft_violations.items()
+    }
+    soft_penalty_total = round(sum(value for value in soft_penalties.values() if value is not None), 6)
+
+    # A P2 solution is usable even when it keeps the same assignment: its
+    # objective still gives the correct penalty score and may prove optimality.
+    phase2_usable = use_phase2
     if not phase2_usable:
         selected_solution = phase1_solution
         assignments = assignments_from_values(selected_solution)
         missing = max(0, total_needed - len(assignments))
-        status = phase1_status
         objective_value = None
-        message = "Đã tìm được lịch thỏa ràng buộc cứng; dùng nghiệm pha 1 vì pha 2 không tìm được cải thiện."
+        if feasibility_only:
+            status = "FEASIBLE"
+            message = "Đã tìm được lịch thỏa ràng buộc cứng ở chế độ Xếp nhanh; chưa tối ưu ràng buộc mềm."
+        else:
+            status = phase1_status
+            message = "Đã tìm được lịch thỏa ràng buộc cứng; dùng nghiệm pha 1 vì pha 2 không tìm được cải thiện."
     else:
         status = phase2_status
         objective_value = phase2_objective
@@ -1055,4 +1319,7 @@ def solve_schedule(payload: dict[str, Any]) -> dict[str, Any]:
             "phase1_time_seconds": phase1_elapsed, "phase2_time_seconds": phase2_elapsed,
             "not_fully_optimized": phase2_status != "OPTIMAL",
             "phase2_improved": phase2_improved, "hint_applied": hint_applied,
-            "soft_violations": soft_violations}
+            "soft_violations": soft_violations, "soft_penalties": soft_penalties,
+            "soft_penalty_total": soft_penalty_total,
+            "soft_details": soft_details,
+            "soft_weights": {rule_id: penalty_weight(rule_id) for rule_id in SOFT_RULE_WEIGHTS}}

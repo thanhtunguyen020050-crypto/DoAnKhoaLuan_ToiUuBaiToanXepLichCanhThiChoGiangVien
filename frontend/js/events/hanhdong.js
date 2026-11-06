@@ -705,7 +705,7 @@ const A={
   async 'apply-teach'(){
     if(!pendTeach)return;
     try{
-      const r=await API.importTeaching(pendTeach.rows.map(x=>({name:x.name,date:x.date,start:x.start,end:x.end,line:x.line})),pendTeach.name);
+      const r=await API.importTeaching(pendTeach.rows.map(x=>({name:x.name,date:x.date,start:x.start,end:x.end,room:x.room,line:x.line})),pendTeach.name);
       await refreshLecturers(false);
       const n=pendTeach.rows.length;pendTeach=null;render();toast('Đã nhập '+n+' ca lịch dạy cho '+r.teachers+' giảng viên.');
     }catch(e){
@@ -760,8 +760,24 @@ for(const r of pend.rows){const s=parsePeriod(r.period);const duration=s.end-s.s
     }catch(e){toast(e.message)}
   },
   'cancel-import-exam'(){pend=null;render()},
-  'reset-soft'(){S.soft={S1:{on:true,w:10},S2:{on:true,w:9},S3:{on:true,w:8},S4:{on:true,w:7},S5:{on:true,w:6},S6:{on:true,w:4}};save();render();toast('Đã khôi phục cấu hình mặc định.')},
+  async 'reset-soft'(){
+    const previous=S.soft;
+    S.soft=softStateFromConfig({});S.softV=3;save();render();
+    try{
+      if(window.__MA_DOT){const result=await API.saveSoftRuleConfig(window.__MA_DOT,softRuleFlags());S.soft=softStateFromConfig(result.rules||{});save()}
+      toast('Đã khôi phục cấu hình mặc định cho đợt thi đang chọn.');
+    }catch(e){S.soft=previous;save();render();toast('Không lưu được cấu hình vào database: '+e.message)}
+  },
   precheck(){doPre();render()},
+  'schedule-time'(t){
+    const value=Number(t.dataset.seconds);if(![30,120,300].includes(value))return;
+    S.scheduleTimeLimit=value;save();
+    document.querySelectorAll('.sched-time-option').forEach(button=>{
+      const active=Number(button.dataset.seconds)===value;
+      button.classList.toggle('active',active);
+      button.setAttribute('aria-checked',String(active));
+    });
+  },
   async auto(){await runAuto()},
   async 'force-run'(){await autoRun()},
   pick(t){pick={ex:+t.dataset.ex,q:''};const e=exm(pick.ex);openModal({title:'Chọn giảng viên · '+(e.period||SES[e.ses])+', '+fmtD(e.date),wide:true,body:'<p class="muted">'+LB[e.kind]+' · cần '+e.need+' giảng viên</p><div class="tools" style="margin-top:10px"><div class="grow"><input type="text" data-inp="pick-q" placeholder="Tìm giảng viên" aria-label="Tìm giảng viên"></div><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="lockNew" checked>Khóa phân công này</label></div><div class="pl" id="pickList">'+pickList()+'</div>'})},
@@ -815,26 +831,50 @@ for(const r of pend.rows){const s=parsePeriod(r.period);const duration=s.end-s.s
       XLSX.utils.book_append_sheet(wb,ws,names[m]);n++;
     });
     if(!n){toast('Chưa có dữ liệu để xuất.');return}
-    const gap=analyze().S1,gapRows=[
-      ['Chỉ số ca gãy','Giá trị'],
-      ['Ràng buộc S1',gap.enabled?'Đang bật':'Đang tắt'],
-      ['Mức ưu tiên S1',gap.weight],
-      ['Tỷ lệ ngày không gãy',gap.total?Math.round((gap.total-gap.fragmentedDays)/gap.total*100)+'%':'—'],
-      ['Số GV-ngày bị gãy',gap.fragmentedDays],
-      ['Số khoảng gãy giữa ca',gap.gapEvents],
-      ['Tổng tiết trống giữa ca',gap.idlePeriods],
-      ['Số lần gãy do qua buổi',gap.sessionBreaks],
-      ['Đơn vị phạt S1',gap.penaltyUnits],
-      ['Điểm phạt S1',gap.penalty],
-      ['Tổng GV-ngày lên trường',gap.total],
-      ['GV-ngày có nhiều ca',gap.multiShiftDays]
+    const report=analyze(),s1=report.S1,rb8=report.RB8,score=S.solverPenaltyReport,scoreS1=score?.details?.S1,scoreRB8=score?.details?.RB8,
+      rb8Enabled=score?score.penalties?.RB8!=null:rb8.enabled,
+      rb8Violations=scoreRB8?.violating_lecturer_days??rb8.violations,
+      rb8Penalty=score?score.penalties?.RB8:rb8.penalty,
+      s1Enabled=score?score.penalties?.S1!=null:s1.enabled,
+      s1Days=scoreS1?.lecturer_days??s1.lecturerDays,
+      s1Singletons=scoreS1?.singleton_exam_days??s1.singletonDays,
+      s1Penalty=score?score.penalties?.S1:s1.penalty,
+      s1Rows=[
+      ['Tránh ca tối khi lịch trong ngày đã dày (RB8)',rb8Enabled?'Đang bật':'Đang tắt'],
+      ['Số ngày vi phạm RB8',rb8Violations],
+      ['Điểm phạt mỗi ngày vi phạm RB8',SOFT_POINTS.RB8],
+      ['Điểm phạt RB8',rb8Penalty??'—'],
+      ['', ''],
+      ['Chỉ số giảm ngày tới trường, tránh ngày chỉ có một ca thi','Giá trị'],
+      ['Giảm ngày tới trường, tránh ngày chỉ có một ca thi (S1)',s1Enabled?'Đang bật':'Đang tắt'],
+      ['Tổng giảng viên-ngày lên trường',s1Days],
+      ['Ngày chỉ có 1 ca coi thi, không lịch dạy/trực đề',s1Singletons],
+      ['Điểm mỗi ngày lên trường',SOFT_POINTS.S1.perDay],
+      ['Điểm phạt thêm cho ngày chỉ có 1 ca coi thi',SOFT_POINTS.S1.singletonExtra],
+      ['Điểm phạt S1',s1Penalty??'—'],
+      ['Tỷ lệ cải thiện so với mỗi ca ở ngày riêng',s1.pct==null?'—':s1.pct+'%']
     ];
-    const gapWs=XLSX.utils.aoa_to_sheet(gapRows);
-    gapWs['!cols']=[{wch:34},{wch:24}];
-    XLSX.utils.book_append_sheet(wb,gapWs,'Chỉ số ca gãy');n++;
+    const s1Ws=XLSX.utils.aoa_to_sheet(s1Rows);
+    s1Ws['!cols']=[{wch:44},{wch:24}];
+    XLSX.utils.book_append_sheet(wb,s1Ws,'Ngày tới trường và ca tối');n++;
+    if(S.solverPenaltyReport){
+      const p=S.solverPenaltyReport,scoreRows=[
+        ['Ràng buộc mềm','Đơn vị tính phạt','Điểm mỗi đơn vị','Tổng điểm phạt'],
+        ...SOFT.map(rule=>[
+          rule.name,
+          p.violations?.[rule.id]??'Đã tắt',
+          p.weights?.[rule.id]??0,
+          p.penalties?.[rule.id]??'—'
+        ]),
+        ['Tổng điểm phạt','','',p.total??'—']
+      ];
+      const scoreWs=XLSX.utils.aoa_to_sheet(scoreRows);
+      scoreWs['!cols']=[{wch:48},{wch:22},{wch:22},{wch:22}];
+      XLSX.utils.book_append_sheet(wb,scoreWs,'Điểm phạt CP-SAT');n++;
+    }
     const t=new Date(),pad=x=>String(x).padStart(2,'0');
     XLSX.writeFile(wb,'lich-gac-thi-'+t.getFullYear()+pad(t.getMonth()+1)+pad(t.getDate())+'.xlsx');
-    toast('Đã tải file Excel gồm '+n+' trang, có bảng ma trận và chỉ số ca gãy.');
+    toast('Đã tải file Excel gồm '+n+' trang, có bảng ma trận và thông tin các tiêu chí ngày tới trường, ca tối.');
   },
   copy(){const d=exportData(F.xm);copyText([d.head].concat(d.rows).map(r=>r.join('\t')).join('\n'))},
   restore(t){

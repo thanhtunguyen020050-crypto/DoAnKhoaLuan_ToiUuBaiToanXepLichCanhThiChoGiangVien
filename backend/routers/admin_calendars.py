@@ -3,10 +3,12 @@ from fastapi import APIRouter, HTTPException
 try:
     from ..ketnoi_sql import get_connection
     from ..schemas.admin import LichDayImportRow, LichBanImportRow
+    from ..models.admin_calendars import replace_teaching as _replace_teaching, import_teaching as _import_teaching
     from ..services.admin_helpers import BUSY_REASONS, _norm_name, dict_rows
 except ImportError:
     from ketnoi_sql import get_connection
     from schemas.admin import LichDayImportRow, LichBanImportRow
+    from models.admin_calendars import replace_teaching as _replace_teaching, import_teaching as _import_teaching
     from services.admin_helpers import BUSY_REASONS, _norm_name, dict_rows
 
 router = APIRouter(tags=['Quản trị - lịch dạy và lịch bận'])
@@ -23,51 +25,11 @@ def teaching_schedule(ma_gv:str):
 
 @router.put('/api/lich-day/{ma_gv}')
 def replace_teaching(ma_gv:str,items:list[dict]):
-    try:
-        with get_connection() as cn:
-            cur=cn.cursor()
-            cur.execute("SELECT 1 FROM dbo.GiangVien WHERE MaGV=? AND TrangThai=N'Đang công tác'",ma_gv)
-            if not cur.fetchone(): raise HTTPException(404,'Giảng viên không tồn tại hoặc không còn công tác.')
-            cur.execute('DELETE FROM dbo.LichDayGV WHERE MaGV=?',ma_gv)
-            for x in items:
-                cur.execute('EXEC dbo.sp_ThemLichDayGV ?,?,?,?,?,?',ma_gv,x['ngay_day'],x['tu_tiet'],x['den_tiet'],x.get('nguon_file'),x.get('ghi_chu'))
-            cn.commit(); return {'ok':True,'count':len(items)}
-    except HTTPException: raise
-    except Exception as e: raise HTTPException(400,f'Lỗi lưu lịch dạy: {e}')
+    return _replace_teaching(ma_gv=ma_gv,items=items)
 
 @router.post('/api/lich-day/import')
 def import_teaching(rows:list[LichDayImportRow], filename:str|None=None):
-    if not rows: raise HTTPException(400,'File không có dữ liệu lịch dạy hợp lệ.')
-    try:
-        with get_connection() as cn:
-            cur=cn.cursor()
-            cur.execute("SELECT MaGV,HoTen FROM dbo.GiangVien WHERE TrangThai=N'Đang công tác'")
-            db=cur.fetchall(); by_name={}
-            for ma,ten in db: by_name.setdefault(ten.strip().casefold(),[]).append((ma,ten))
-            grouped={}; errors=[]
-            for r in rows:
-                matches=by_name.get(r.name.strip().casefold(),[])
-                if not matches:
-                    errors.append({'line':r.line,'name':r.name,'msg':'Không tìm thấy giảng viên này trong CSDL. Hãy thêm giảng viên trước khi import lịch dạy.'}); continue
-                if len(matches)>1:
-                    errors.append({'line':r.line,'name':r.name,'msg':'Tên giảng viên bị trùng trong CSDL, không thể xác định MaGV.'}); continue
-                grouped.setdefault(matches[0][0],[]).append(r)
-            if errors: raise HTTPException(status_code=400,detail={'message':'Import lịch dạy bị từ chối vì có giảng viên chưa khớp CSDL.','errors':errors})
-            total_inserted=0
-            for ma,items in grouped.items():
-                cur.execute('DELETE FROM dbo.LichDayGV WHERE MaGV=?',ma)
-                # Dedup: cùng GV + cùng ngày + cùng tiết chỉ INSERT 1 lần
-                # (file Excel có thể liệt kê cùng GV dạy nhiều lớp khác nhau cùng slot)
-                seen=set()
-                for r in items:
-                    key=(r.date,r.start,r.end)
-                    if key in seen: continue
-                    seen.add(key)
-                    cur.execute('EXEC dbo.sp_ThemLichDayGV ?,?,?,?,?,?',ma,r.date,r.start,r.end,filename,None)
-                    total_inserted+=1
-            cn.commit(); return {'ok':True,'teachers':len(grouped),'rows':total_inserted,'duplicates_skipped':len(rows)-total_inserted}
-    except HTTPException: raise
-    except Exception as e: raise HTTPException(400,f'Lỗi import lịch dạy: {e}')
+    return _import_teaching(rows=rows,filename=filename)
 
 @router.get('/api/lich-ban/{ma_gv}')
 def busy_schedule(ma_gv:str):
